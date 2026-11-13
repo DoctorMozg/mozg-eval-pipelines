@@ -161,7 +161,7 @@ class TestGraders:
         ]
         assert len(result.flags) == 1
 
-    def test_file_path_input_match_becomes_a_path_regex(self, convert: Convert) -> None:
+    def test_write_path_check_becomes_a_file_change_check(self, convert: Convert) -> None:
         grader = {
             "name": "no-write",
             "type": "tool_used",
@@ -176,14 +176,30 @@ class TestGraders:
         assert result.case["graders"] == [
             {
                 "name": "no-write",
-                "type": "tool_called",
-                "kind": "write",
+                "type": "file_changed",
                 "path_match": '^[^"]*/\\.mz/state\\.md$',
                 "min": 0,
                 "max": 0,
             }
         ]
         assert result.flags == []
+
+    def test_read_path_check_stays_a_tool_check(self, convert: Convert) -> None:
+        grader = {
+            "name": "reads-spec",
+            "type": "tool_used",
+            "tool": "Read",
+            "input_match": '"file_path"\\s*:\\s*"[^"]*/spec\\.md"',
+        }
+
+        [converted] = convert(case_11([grader], tags=["gate"])).case["graders"]
+
+        assert converted == {
+            "name": "reads-spec",
+            "type": "tool_called",
+            "kind": "read",
+            "path_match": '^[^"]*/spec\\.md$',
+        }
 
     def test_llm_criteria_become_one_flagged_judge_item(self, convert: Convert) -> None:
         grader = {"name": "j", "type": "llm", "criteria": "PASS if polite.\n", "weight": 2}

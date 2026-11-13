@@ -298,6 +298,10 @@ class _CaseConverter:
         if named and (match := named.match(pattern)):
             self._note(f"tool_used {tool} -> {kind}")
             return {"type": kind, kind: match.group(1), **limits}
+        if pattern.startswith(_FILE_PATH_PREFIX) and kind in ("write", "edit"):
+            # Files written through Bash or a script count too, so the check holds on every agent.
+            self._note(f"tool_used {tool} file_path -> file_changed")
+            return {"type": "file_changed", "path_match": _path_regex(pattern), **limits}
         if pattern.startswith(_FILE_PATH_PREFIX):
             self._note(f"tool_used {tool} file_path -> tool_called path_match")
             return {

@@ -160,6 +160,18 @@ class FileExistsGrader(Named):
     exists: bool = True
 
 
+class FileChangedGrader(GraderBase):
+    """Counts workspace files the run created, modified or deleted, whatever tool changed them."""
+
+    type: Literal["file_changed"]
+    path_match: str | None = Field(None, description="regex over the file's absolute path")
+
+    @model_validator(mode="after")
+    def _regex(self) -> Self:
+        _check_regex(self.path_match)
+        return self
+
+
 class CommandGrader(Named):
     type: Literal["command"]
     run: Name = Field(description="shell command run in the workspace after the session")
@@ -185,6 +197,7 @@ type Grader = Annotated[
     | RawRegexGrader
     | HookFiredGrader
     | FileExistsGrader
+    | FileChangedGrader
     | CommandGrader
     | JudgeGrader,
     Field(discriminator="type"),

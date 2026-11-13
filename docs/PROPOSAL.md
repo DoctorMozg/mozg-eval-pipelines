@@ -272,6 +272,7 @@ drivers: { exclude: [pi] }      # optional, e.g. needs subagents
 graders into labelled data for precision, recall and the confusion matrix.
 
 Deterministic graders: `skill`, `subagent`, `tool_called{kind, match, path_match}`, `tool_order`,
+`file_changed{path_match}`,
 `regex{target: final|transcript|created_files|{file}}`, `file_exists`, `command` (a script that
 runs in the workspace after the session and passes on exit 0, which `claude plugin eval` lacks), and
 `hook_fired`. Escape hatch: `raw_regex{driver: claude}` for the trace regexes that really are
@@ -289,6 +290,10 @@ As built (milestone 2), so v2 stays a superset of 1.1:
 - `expect.skill.owner` is graded: the owner must fire. The importer sets it only where the 1.1 case
   asserted it, so migrated cases make the same assertions as before.
 - `file_exists` globs over files the agent created during the run, as in 1.1.
+- `file_changed` counts workspace files created, modified or deleted during the run (from the
+  workspace diff), whatever tool changed them. The importer maps 1.1 `Write`/`Edit` path checks to
+  it: the spike showed agents writing the same file through `Bash` or a script, which a tool-name
+  check misses ([spike note](SPIKE-coder-eval.md)).
 - Also carried over from 1.1: `runs` (default 3), `max_turns` (10), `timeout_s` (300), `model`,
   `append_system_prompt`, `env`, `history_file`, `add_dirs`, judge `focus` and `baseline`.
   Not yet: the `mock_calls` target, which arrives with MCP mocks (section 6, Later), and the
@@ -659,7 +664,7 @@ report. The old files stay until you delete them.
 | --------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- | ------------------------- |
 | `tool_used Skill` with `input_match` `"skill":"…X"` | `expect.skill: X` (or `not: X` when `max: 0`)                                                                     | 401 / 241                 |
 | `tool_used Agent` `subagent_type`                   | `subagent: X`                                                                                                     | 53 / 0                    |
-| `tool_used Write/Edit/Bash` + `file_path` regex     | `tool_called{kind, path_match}`                                                                                   | 140 / 0                   |
+| `tool_used Write/Edit` + `file_path` regex          | `file_changed{path_match}` (`Read` and `Bash` stay `tool_called`)                                                 | 90 / 0                    |
 | `regex` on the last message or a file               | unchanged                                                                                                         | ~220 / 4                  |
 | `regex target: trace`                               | `raw_regex{driver: claude}`, flagged; rewriting to `hook_fired`, `skill` or `file_change` is a manual review step | 128 / 0                   |
 | `llm criteria`                                      | `judge.checklist` (one item per sentence, reviewed by hand)                                                       | 0 / 4                     |
@@ -682,24 +687,31 @@ Each milestone stays at or under 10 files and 400 changed lines, except mechanic
     examples and rejects an unknown key with file:line.
 03. **Importer:** 1.1 → v2 with a migration report. → verify: imports all 534 cases; the report
     lists every flagged grader; a round-trip test on fixtures.
-04. **coder-eval spike (one day, no code kept):** 20 imported cases on Claude and Codex. → verify: a
-    written go/no-go note in `docs/` on building vs contributing upstream.
-05. **Event model, driver protocol, run log and guards.** → verify: a fake stdio driver (a 30-line
-    test script) streams events into `events.jsonl`; the cost guard cancels it mid-run; replaying the
-    log grades identically to the live run.
+04. **coder-eval spike: done 2026-11-14.** Verdict: build mozg-eval; borrow coder-eval's Codex skill
+    install. Findings and the changes below are in [SPIKE-coder-eval.md](SPIKE-coder-eval.md).
+05. **Event model, driver protocol, run log and guards.** The `start` event records every resolved
+    setting with the layer that set it (case, suite, config file, CLI flag), as coder-eval's config
+    lineage does. → verify: a fake stdio driver (a 30-line test script) streams events into
+    `events.jsonl`; the cost guard cancels it mid-run; replaying the log grades identically to the
+    live run.
 06. **Storage layer:** `ResultStore`, `EventStore` and `ArtifactStore`; SQLite and disk backends;
     URL-based config; first Alembic migration; contract tests. → verify: contract suites green on
     SQLite and disk; appending the same `(trial, seq)` twice stores it once; a test proves
     workspace B can't read workspace A's runs.
-07. **Claude driver and isolation.** → verify: replay recorded `stream-json` fixtures (free); one paid
-    smoke run of 5 cases; no file outside the temp HOME is read from `~/.claude`.
+07. **Claude driver and isolation.** A case's `tools` are the only tools the session gets (`--tools`),
+    not an auto-approve list: in the spike, giving Claude every tool dropped 6 of 16 routing cases.
+    → verify: replay recorded `stream-json` fixtures (free); one paid smoke run of 5 cases; no file
+    outside the temp HOME is read from `~/.claude`; a `tools: [skill]` case offers no other tool.
 08. **Deterministic graders, stats, static report with local trends.** → verify: unit tests on
     recorded traces; the HTML renders the heatmap, Wilson bars and a trend from two stored runs.
 09. **Parity gate:** run the imported mz-memory and publish suites on Claude. → verify: per-case
     pass rates agree with the last `claude plugin eval` JSON within the CI.
-10. **Codex driver:** ports `codex_runtime`, `codex_process` and the skill-evidence heuristics.
-    → verify: the "unsupported" share drops from 66% to the honestly vendor-specific remainder
-    (~6%).
+10. **Codex driver:** ports `codex_runtime`, `codex_process` and the hook bridge. Skills are copied
+    into `<workspace>/.agents/skills/` and a read of `skills/<name>/` is emitted as `skill_activated`
+    with `evidence: inferred`, as coder-eval does; `CODEX_HOME` is always a temp dir. → verify: the
+    16 spike routing cases that the current runner marks unsupported are graded; the
+    hook-dependent spike case (inject-recent-decision) passes; the "unsupported" share drops from
+    66% to the honestly vendor-specific remainder (~6%).
 11. **LLM judge on PydanticAI:** `Verdict` agent, evidence validator, cache, `rejudge`. → verify:
     the 4 publish traps regrade from stored traces at $0 agent cost; a test model that returns a
     made-up quote is retried and ends as `unknown`, never `pass`.
