@@ -1,4 +1,4 @@
-"""Runs one trial: streams a driver's events into the run log and cancels it when a guard trips."""
+"""Runs one trial: streams a driver's events into the event store; a tripped guard cancels it."""
 
 import asyncio
 import logging
@@ -7,7 +7,6 @@ from datetime import UTC, datetime
 from typing import Protocol
 
 from mozg_eval.drivers.protocol import Driver, TrialRequest
-from mozg_eval.events.log import RunLog
 from mozg_eval.events.models import (
     CheckResult,
     End,
@@ -22,6 +21,7 @@ from mozg_eval.events.models import (
     Usage,
 )
 from mozg_eval.spec.models import ToolKind
+from mozg_eval.storage.base import EventStore
 
 log = logging.getLogger(__name__)
 
@@ -75,15 +75,17 @@ class TrialRunner:
 
     def __init__(
         self,
+        ws: str,
         run_id: str,
         driver: Driver,
-        log: RunLog,
+        store: EventStore,
         guards: Sequence[Guard],
         clock: Callable[[], datetime] = lambda: datetime.now(UTC),
     ) -> None:
+        self.ws = ws
         self.run_id = run_id
         self.driver = driver
-        self.log = log
+        self.store = store
         self.guards = guards
         self.clock = clock
         self.events: list[Event] = []
@@ -91,7 +93,7 @@ class TrialRunner:
         self._pending: set[asyncio.Task[None]] = set()
 
     async def run(self, request: TrialRequest, settings: dict[str, Setting]) -> list[Event]:
-        """Return the events exactly as written to the log; the last one is always `end`."""
+        """Return the events exactly as stored; the last one is always `end`."""
         start = Start(
             driver=self.driver.name,
             driver_version=await self.driver.version(),
@@ -99,7 +101,7 @@ class TrialRunner:
             workspace=request.workspace,
             settings=settings,
         )
-        self._emit(request.trial, start)
+        await self._emit(request.trial, start)
         driver_end: End | None = None
         timer = asyncio.get_running_loop().call_later(
             request.limits.timeout_s, self._stop_on_timeout, request.limits.timeout_s
@@ -113,18 +115,18 @@ class TrialRunner:
                     payload = Error(
                         message=f"driver sent '{payload.type}', which only the core writes"
                     )
-                self._emit(request.trial, payload)
+                await self._emit(request.trial, payload)
                 await self._check_guards(payload)
         finally:
             timer.cancel()
-        self._emit(request.trial, self._end(driver_end))
+        await self._emit(request.trial, self._end(driver_end))
         return self.events
 
-    def _emit(self, trial: str, payload: Payload) -> None:
+    async def _emit(self, trial: str, payload: Payload) -> None:
         event = Event(
             run=self.run_id, trial=trial, seq=len(self.events) + 1, t=self.clock(), payload=payload
         )
-        self.log.append(event)
+        await self.store.append(self.ws, self.run_id, trial, [event])
         self.events.append(event)
 
     async def _check_guards(self, payload: Payload) -> None:

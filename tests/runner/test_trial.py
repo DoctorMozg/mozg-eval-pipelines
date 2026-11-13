@@ -8,11 +8,11 @@ import pytest
 
 from mozg_eval.drivers import protocol
 from mozg_eval.drivers.protocol import DriverManifest, Limits, StdioDriver, TrialRequest
-from mozg_eval.events.log import RunLog
 from mozg_eval.events.models import End, Error, Event, Message, Start, ToolCall, Usage
 from mozg_eval.runner.settings import resolve_settings
 from mozg_eval.runner.trial import CostGuard, ForbiddenToolGuard, Guard, TrialRunner, TurnGuard
 from mozg_eval.spec.models import Execution
+from mozg_eval.storage.disk import DiskEventStore
 
 FAKE = Path(__file__).with_name("fake_driver.py")
 
@@ -35,9 +35,9 @@ def trial(tmp_path: Path) -> Trial:
             workspace=str(tmp_path),
             limits=Limits(max_turns=10, timeout_s=timeout_s),
         )
-        with RunLog(tmp_path / "events.jsonl") as log:
-            runner = TrialRunner("r1", StdioDriver(manifest, tmp_path / "raw"), log, guards)
-            return asyncio.run(runner.run(request, {}))
+        store = DiskEventStore(tmp_path / "events")
+        runner = TrialRunner("local", "r1", StdioDriver(manifest, tmp_path / "raw"), store, guards)
+        return asyncio.run(runner.run(request, {}))
 
     return run
 
@@ -48,6 +48,13 @@ def end_of(events: list[Event]) -> End:
     return end
 
 
+def stored(tmp_path: Path) -> list[Event]:
+    async def read() -> list[Event]:
+        return [e async for e in DiskEventStore(tmp_path / "events").read("local", "r1", "t1")]
+
+    return asyncio.run(read())
+
+
 def count(events: list[Event], kind: type) -> int:
     return sum(isinstance(e.payload, kind) for e in events)
 
@@ -56,7 +63,7 @@ class TestTrialRunner:
     def test_streams_every_event_into_the_log(self, trial: Trial, tmp_path: Path) -> None:
         events = trial("ok")
 
-        assert RunLog.read(tmp_path / "events.jsonl") == events
+        assert stored(tmp_path) == events
         assert isinstance(start := events[0].payload, Start)
         assert start.driver_version == "fake 1.0"
         assert [e.seq for e in events] == list(range(1, len(events) + 1))
@@ -78,7 +85,7 @@ class TestTrialRunner:
         tripped_live = max(e.seq for e in live if isinstance(e.payload, Usage))
 
         guard = CostGuard(0.25)
-        replayed = RunLog.read(tmp_path / "events.jsonl")
+        replayed = stored(tmp_path)
         tripped = next(e.seq for e in replayed if guard.check(e.payload))
 
         assert replayed == live
