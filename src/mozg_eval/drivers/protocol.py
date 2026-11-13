@@ -55,8 +55,16 @@ class TrialRequest(StrictModel):
     prompt: str
     workspace: str
     env: dict[str, str] = Field(default_factory=dict)
-    skills: list[str] = Field(default_factory=list, description="installed skill directories")
-    tools: list[ToolKind] = Field(default_factory=list)
+    plugins: list[str] = Field(
+        default_factory=list,
+        description="plugin directories the case loads; each driver installs them its own way",
+    )
+    tools: list[ToolKind] = Field(
+        default_factory=list,
+        description="the only tools offered; empty means the agent's default set",
+    )
+    model: str | None = None
+    append_system_prompt: str | None = None
     limits: Limits
 
 

@@ -11,6 +11,7 @@ from typing import Any
 import yaml
 from pydantic import ValidationError
 
+from mozg_eval.drivers.claude import CLAUDE_TOOL_KINDS
 from mozg_eval.spec.loader import CASE_FILENAME
 from mozg_eval.spec.models import SCHEMA, Case
 
@@ -18,17 +19,6 @@ log = logging.getLogger(__name__)
 
 SOURCE_FILENAME = "case.yaml"
 
-CLAUDE_TOOL_KINDS = {
-    "Skill": "skill",
-    "Agent": "subagent",
-    "Read": "read",
-    "Write": "write",
-    "Edit": "edit",
-    "Glob": "glob",
-    "Grep": "grep",
-    "Bash": "shell",
-    "AskUserQuestion": "ask_user",
-}
 _NAMED_INPUT = r'^"{key}"\\s\*:\\s\*"\(\?:\[\\w-\]\+:\)\?([\w-]+)"$'
 _SKILL_INPUT = re.compile(_NAMED_INPUT.format(key="skill"))
 _SUBAGENT_INPUT = re.compile(_NAMED_INPUT.format(key="subagent_type"))

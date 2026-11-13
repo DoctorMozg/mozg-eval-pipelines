@@ -166,7 +166,7 @@ capabilities:
 ```
 
 ```jsonl
-→ {"type":"start","trial":"t-7f3a","prompt":"...","workspace":"/tmp/mz/ws","env":{"HOME":"/tmp/mz/home"},"skills":["/tmp/mz/home/.agents/skills/resolve-render"],"limits":{"max_turns":8,"timeout_s":240}}
+→ {"type":"start","trial":"t-7f3a","prompt":"...","workspace":"/tmp/mz/ws","env":{"HOME":"/tmp/mz/home"},"plugins":["/repo/plugins/davinci-resolve"],"limits":{"max_turns":8,"timeout_s":240}}
 ← {"seq":1,"type":"message","role":"assistant","text":"Checking the render first..."}
 ← {"seq":2,"type":"skill_activated","skill":"resolve-verify","evidence":"inferred"}
 ← {"seq":3,"type":"usage","in":1820,"out":412}
