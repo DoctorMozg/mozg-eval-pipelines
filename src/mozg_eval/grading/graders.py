@@ -32,6 +32,7 @@ from mozg_eval.spec.models import (
     JudgeGrader,
     RawRegexGrader,
     RegexGrader,
+    RegexTarget,
     SkillGrader,
     SkillNotExpected,
     SubagentGrader,
@@ -67,6 +68,28 @@ def _matches_call(call: ToolCall, step: ToolRef) -> bool:
     return call.kind == step.kind and (
         step.match is None or bool(re.search(step.match, _compact(call.input)))
     )
+
+
+def event_texts(target: RegexTarget, payloads: Sequence[Payload]) -> list[str]:
+    """What a target reads from the events; file targets read the workspace, not events."""
+    replies = [p.text for p in payloads if isinstance(p, Message) and p.role == "assistant"]
+    match target:
+        case "final":
+            return replies[-1:]
+        case "replies":
+            return replies
+        case "tool_results":
+            return [p.output for p in payloads if isinstance(p, ToolResult)]
+        case "transcript":
+            # what was said and what the tools returned, in order
+            return [
+                "\n".join(
+                    p.text if isinstance(p, Message) else p.output
+                    for p in payloads
+                    if isinstance(p, Message | ToolResult)
+                )
+            ]
+    return []
 
 
 class TrialGrader:
@@ -127,7 +150,7 @@ class TrialGrader:
                 return "n/a", "no workspace check was recorded"
             return ("pass" if check.passed else "fail"), check.detail
         if isinstance(grader, JudgeGrader):
-            return "n/a", "the LLM judge arrives in milestone 11"
+            return "n/a", "not judged"
         if isinstance(grader, ToolOrderGrader):
             return self._tool_order(grader, payloads)
         if isinstance(grader, RawRegexGrader) and self.raw is None:
@@ -169,7 +192,9 @@ class TrialGrader:
                 )
             case RegexGrader():
                 pattern = re.compile(grader.pattern, regex_flags(grader.flags))
-                return sum(len(pattern.findall(text)) for text in self._texts(grader, payloads))
+                return sum(
+                    len(pattern.findall(text)) for text in event_texts(grader.target, payloads)
+                )
             case RawRegexGrader():
                 return len(re.findall(grader.pattern, self.raw or "", regex_flags(grader.flags)))
         raise ValueError(f"no counter for grader {grader.name} ({type(grader).__name__})")
@@ -183,25 +208,6 @@ class TrialGrader:
         if grader.path_match is None:
             return True
         return any(re.search(grader.path_match, path) for path in _paths(call.input))
-
-    @staticmethod
-    def _texts(grader: RegexGrader, payloads: list[Payload]) -> list[str]:
-        replies = [p.text for p in payloads if isinstance(p, Message) and p.role == "assistant"]
-        match grader.target:
-            case "final":
-                return replies[-1:]
-            case "replies":
-                return replies
-            case "tool_results":
-                return [p.output for p in payloads if isinstance(p, ToolResult)]
-        # transcript: what was said and what the tools returned, in order
-        return [
-            "\n".join(
-                p.text if isinstance(p, Message) else p.output
-                for p in payloads
-                if isinstance(p, Message | ToolResult)
-            )
-        ]
 
     @staticmethod
     def _tool_order(grader: ToolOrderGrader, payloads: list[Payload]) -> tuple[Verdict, str]:

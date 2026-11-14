@@ -1,8 +1,17 @@
 import json
 import sys
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
+from pydantic_ai.messages import (
+    ModelMessage,
+    ModelRequest,
+    ModelResponse,
+    ToolCallPart,
+    UserPromptPart,
+)
+from pydantic_ai.models.function import AgentInfo, FunctionModel
 
 
 def _wrap(script: str, executable: Path) -> Path:
@@ -58,3 +67,28 @@ def claude_plugin(tmp_path: Path) -> Path:
     (root / "hooks" / "hooks.json").write_text(json.dumps(hooks))
     (root / ".git").mkdir()
     return root
+
+
+@pytest.fixture
+def quoting_judge() -> Callable[..., FunctionModel]:
+    """A judge model giving the next of its verdicts per criterion; it quotes the evidence's end."""
+
+    def make(*verdicts: str) -> FunctionModel:
+        given: list[str] = []
+
+        def answer(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            first = messages[0]
+            assert isinstance(first, ModelRequest)
+            prompt = next(p.content for p in first.parts if isinstance(p, UserPromptPart))
+            assert isinstance(prompt, str)
+            if len(messages) == 1:
+                given.append(verdicts[min(len(given), len(verdicts) - 1)])
+            evidence = prompt.partition("<evidence>\n")[2].rpartition("\n</evidence>")[0]
+            lines = [line for line in evidence.splitlines() if line.strip()]
+            quote = lines[-1][-40:] if lines else ""
+            args = {"reasoning": "read it", "verdict": given[-1], "evidence_quote": quote}
+            return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, args)])
+
+        return FunctionModel(answer)
+
+    return make

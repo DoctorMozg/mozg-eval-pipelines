@@ -17,7 +17,10 @@ from mozg_eval.importers.claude_plugin_eval import (
     ClaudePluginEvalImporter,
     render_report,
 )
+from mozg_eval.judge.cache import JudgeCache
+from mozg_eval.judge.grading import JudgeSetupError, TrialJudge
 from mozg_eval.report.html import ReportBuilder
+from mozg_eval.runner.rejudge import Rejudger
 from mozg_eval.runner.suite import FixtureError, SuiteRunner
 from mozg_eval.spec.loader import CASE_FILENAME, CaseLoader, CaseLoadError
 from mozg_eval.spec.models import Case
@@ -43,6 +46,19 @@ DRIVERS: dict[DriverName, type[ClaudeDriver | CodexDriver]] = {
 
 import_app = typer.Typer(help="Convert cases from other eval tools.", no_args_is_help=True)
 app.add_typer(import_app, name="import")
+
+JudgeOption = Annotated[
+    str | None,
+    typer.Option(
+        "--judge",
+        help="Model for judge graders that name none, e.g. anthropic:claude-sonnet-5-5; "
+        "its API key comes from the environment.",
+    ),
+]
+
+
+def _judge_cache() -> JudgeCache:
+    return JudgeCache(Path.cwd() / ".mzeval" / "judge-cache")
 
 
 def _print_version(value: bool) -> None:
@@ -109,6 +125,7 @@ def run(
     executable: Annotated[
         str | None, typer.Option(help="The agent's executable; defaults to the driver name.")
     ] = None,
+    judge: JudgeOption = None,
 ) -> None:
     """Run and grade cases on one agent.
 
@@ -129,9 +146,13 @@ def run(
         lambda home, raw_dir: DRIVERS[driver](home, raw_dir, executable=command),
         DEFAULT_WORKSPACE,
         overrides,
+        lambda cases: TrialJudge.for_cases(cases, judge, _judge_cache()),
     )
     try:
         record, trials = asyncio.run(suite.run(files))
+    except JudgeSetupError as exc:
+        typer.echo(f"judge: {exc}", err=True)
+        raise typer.Exit(2) from exc
     except CaseLoadError as exc:
         for issue in exc.issues:
             typer.echo(str(issue), err=True)
@@ -163,6 +184,49 @@ def run(
     if stats.failing():
         typer.echo("below threshold: " + ", ".join(c.case for c in stats.failing()))
         raise typer.Exit(1)
+
+
+@app.command()
+def rejudge(
+    run_id: Annotated[str, typer.Argument(help="The stored run to regrade.")],
+    paths: Annotated[
+        list[Path],
+        typer.Argument(
+            exists=True, help=f"The run's case files, or directories of {CASE_FILENAME}."
+        ),
+    ],
+    judge: JudgeOption = None,
+) -> None:
+    """Regrade a stored run's judge graders from its stored events, without running any agent."""
+    loader = CaseLoader()
+    try:
+        cases = {c.name: c for c in map(loader.load, CaseLoader.discover(paths))}
+        trial_judge = TrialJudge.for_cases(cases.values(), judge, _judge_cache())
+    except CaseLoadError as exc:
+        for issue in exc.issues:
+            typer.echo(str(issue), err=True)
+        raise typer.Exit(2) from exc
+    except JudgeSetupError as exc:
+        typer.echo(f"judge: {exc}", err=True)
+        raise typer.Exit(2) from exc
+    stores = open_stores(StorageConfig.load(Path.cwd()))
+    try:
+        trials = asyncio.run(
+            Rejudger(stores, DEFAULT_WORKSPACE, trial_judge).rejudge(run_id, cases)
+        )
+    except LookupError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(2) from exc
+    finally:
+        stores.results.close()
+    for trial in trials:
+        verdict = "PASS" if trial.record.passed else "FAIL"
+        typer.echo(f"{verdict} {trial.case} #{trial.record.repeat}")
+        judged = {g.name for g in cases[trial.case].graders if g.type == "judge"}
+        for grade in trial.grades:
+            if grade.name in judged:
+                typer.echo(f"    {grade.name}: {grade.verdict}, {grade.detail}")
+    typer.echo(f"run {run_id}: rejudged {len(trials)} trials")
 
 
 @app.command()

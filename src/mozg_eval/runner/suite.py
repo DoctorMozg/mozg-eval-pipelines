@@ -16,6 +16,7 @@ from mozg_eval.events.models import End, EndStatus, Event, Payload, SkillActivat
 from mozg_eval.grading.graders import TrialGrader
 from mozg_eval.grading.models import GradeResult
 from mozg_eval.grading.support import DriverSupport
+from mozg_eval.judge.grading import TrialJudge, merged
 from mozg_eval.runner.checks import WorkspaceChecks, needs_workspace, snapshot
 from mozg_eval.runner.settings import resolve_settings
 from mozg_eval.runner.trial import TrialRunner, TurnGuard
@@ -28,6 +29,8 @@ log = logging.getLogger(__name__)
 
 # (home, raw_dir) -> a driver for one trial; drivers keep per-trial process state.
 type DriverFactory = Callable[[Path, Path], Driver]
+# Builds the suite's judges once its cases are loaded, before any trial starts.
+type JudgeFactory = Callable[[Sequence[Case]], TrialJudge]
 
 
 class FixtureError(RuntimeError):
@@ -77,6 +80,7 @@ class SuiteRunner:
         make_driver: DriverFactory,
         ws: str,
         overrides: Mapping[str, JsonValue],
+        make_judge: JudgeFactory,
     ) -> None:
         self.stores = stores
         self.support = support
@@ -84,6 +88,7 @@ class SuiteRunner:
         self.make_driver = make_driver
         self.ws = ws
         self.overrides = overrides
+        self.make_judge = make_judge
 
     def runnable(self, case: Case) -> str | None:
         """Return why the case can't run on this driver yet, or None."""
@@ -102,6 +107,7 @@ class SuiteRunner:
     async def run(self, case_files: Sequence[Path]) -> tuple[RunRecord, list[TrialSummary]]:
         loader = CaseLoader()
         cases = [(path.parent, loader.load(path)) for path in case_files]
+        judge = self.make_judge([case for _, case in cases])
         run = RunRecord(id=new_id(), started_at=datetime.now(UTC), trigger="local")
         self.stores.results.add_run(self.ws, run)
         log.info("run %s: %d cases on %s", run.id, len(cases), self.driver_name)
@@ -112,10 +118,12 @@ class SuiteRunner:
                 continue
             execution = case.execution.model_copy(update=self.overrides)
             for repeat in range(1, execution.runs + 1):
-                summaries.append(await self._trial(run, case_dir, case, repeat))
+                summaries.append(await self._trial(run, judge, case_dir, case, repeat))
         return run, summaries
 
-    async def _trial(self, run: RunRecord, case_dir: Path, case: Case, repeat: int) -> TrialSummary:
+    async def _trial(
+        self, run: RunRecord, judge: TrialJudge, case_dir: Path, case: Case, repeat: int
+    ) -> TrialSummary:
         execution = case.execution.model_copy(update=self.overrides)
         trial_id = new_id()
         # The temp dir holds the workspace and the HOME with linked credentials; both go with it.
@@ -152,13 +160,14 @@ class SuiteRunner:
             post_run += [await checks.check(g) for g in case.graders if needs_workspace(g)]
             for payload in post_run:
                 await runner.append(trial_id, payload)
+            judged = await judge.grade(case, [e.payload for e in events], workspace)
             for name in ("raw.jsonl", "stderr.log"):
                 if (raw_dir / name).exists():
                     ref = ArtifactRef(run=run.id, trial=trial_id, name=name)
                     await self.stores.artifacts.put(self.ws, ref, _file_chunks(raw_dir / name))
             raw_log = raw_dir / "raw.jsonl"
             raw = raw_log.read_text(errors="replace") if raw_log.exists() else None
-        grades = TrialGrader(case, self.support, raw).grade(events)
+        grades = merged(TrialGrader(case, self.support, raw).grade(events), judged)
         status, cost = _outcome(events)
         record = TrialRecord(
             id=trial_id,

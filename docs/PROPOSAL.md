@@ -310,13 +310,16 @@ al. on kappa):
 
 - **Binary checklist.** One verdict per criterion: `pass | fail | unknown`. The judge writes its
   reasoning before the verdict and must give an `evidence` quote.
-- **Evidence must be a real substring** of the transcript or the output files, or the verdict is
-  rejected and retried once. This is a cheap anti-hallucination check.
+- **Evidence must be a real substring** of the transcript or the output files, at least 8
+  characters long (whitespace aside), or the verdict is rejected and retried twice. This is a
+  cheap anti-hallucination check.
 - **Cross-vendor by default.** Judge Claude runs with a GPT-family judge and the reverse, to avoid
   self-preference bias.
-- **Cheap judge first, escalate on `unknown` or disagreement** to a 3-judge majority vote.
+- **Cheap judge first, escalate on `unknown` or disagreement** to a 3-judge majority vote. Until
+  escalation exists, an `unknown` grades `n/a`: never `pass`, and not a failure of the agent.
 - **Cached and versioned.** The cache key is (trace hash, criterion, judge model, judge prompt hash).
-  `mzeval rejudge <run>` regrades stored traces without rerunning agents. Trend charts mark
+  `mzeval rejudge <run> <cases>` regrades stored traces without rerunning agents; a judge that reads
+  files grades `n/a` there, since the trial's workspace is gone. Trend charts mark
   judge-version changes.
 - **Calibration.** `mzeval judge calibrate labels.jsonl` reports Cohen's κ and a confusion matrix.
   Ship a judge criterion at κ ≥ 0.6; that formalises what the video repo already does by hand for

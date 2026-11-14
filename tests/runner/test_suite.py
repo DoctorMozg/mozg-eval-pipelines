@@ -1,12 +1,19 @@
 import asyncio
 import json
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
+from pydantic_ai.models.function import FunctionModel
 from typer.testing import CliRunner
 
 from mozg_eval.cli import app
 from mozg_eval.events.models import CheckResult, End, Event
+from mozg_eval.judge.cache import JudgeCache
+from mozg_eval.judge.grading import TrialJudge
+from mozg_eval.judge.verdict import CriterionJudge
+from mozg_eval.runner.rejudge import Rejudger
+from mozg_eval.spec.loader import CaseLoader
 from mozg_eval.storage.base import ArtifactRef
 from mozg_eval.storage.config import StorageConfig, open_stores
 
@@ -92,6 +99,17 @@ class TestRunCommand:
 
         assert result.exit_code == 0
         assert "0 trials" in result.output
+
+    def test_unusable_judge_stops_the_run_before_any_agent(
+        self, suite: Path, fake_claude: Path, tmp_path: Path
+    ) -> None:
+        result = CliRunner().invoke(
+            app, ["run", str(suite), "--judge", "nonsense", "--executable", str(fake_claude)]
+        )
+
+        assert result.exit_code == 2
+        assert "judge: Unknown model: nonsense" in result.output
+        assert not (tmp_path / "record.json").exists()
 
     def test_workspace_checks_are_stored_after_end(
         self, suite: Path, fake_claude: Path, tmp_path: Path
@@ -189,3 +207,58 @@ class TestRunCommand:
         assert result.exit_code == 0, result.output
         assert "0 trials" in result.output
         assert not (tmp_path / "record.json").exists()
+
+
+class TestRejudge:
+    @pytest.fixture
+    def stored_run(self, suite: Path, fake_claude: Path, tmp_path: Path) -> str:
+        """One trial stored with an unjudged judge grader, since no --judge was given."""
+        case = suite / "case.mzeval.yaml"
+        case.write_text(
+            case.read_text()
+            + "graders:\n  - {name: listing, type: judge, checklist: [no twist], focus: final}\n"
+        )
+        result = CliRunner().invoke(
+            app, ["run", str(suite), "--runs", "1", "--executable", str(fake_claude)]
+        )
+        assert result.exit_code == 0, result.output
+        stores = open_stores(StorageConfig.load(tmp_path, env={}))
+        (run,) = stores.results.list_runs("local")
+        stores.results.close()
+        return run.id
+
+    def test_rejudge_replaces_only_the_judge_grade_and_the_pass_flag(
+        self,
+        stored_run: str,
+        suite: Path,
+        tmp_path: Path,
+        quoting_judge: Callable[..., FunctionModel],
+    ) -> None:
+        stores = open_stores(StorageConfig.load(tmp_path, env={}))
+        before = stores.results.list_grades("local", stored_run)
+        judge = TrialJudge(CriterionJudge(quoting_judge("fail"), JudgeCache(tmp_path / "jc")), {})
+        case = CaseLoader().load(suite / "case.mzeval.yaml")
+
+        [summary] = asyncio.run(
+            Rejudger(stores, "local", judge).rejudge(stored_run, {case.name: case})
+        )
+
+        after = stores.results.list_grades("local", stored_run)
+        (trial,) = stores.results.list_trials("local", stored_run)
+        stores.results.close()
+        (old,) = before.values()
+        (new,) = after.values()
+        assert [g.verdict for g in old] == ["pass", "n/a"]
+        assert [g.verdict for g in new] == ["pass", "fail"]
+        assert new == summary.grades
+        assert trial.passed is False
+
+    def test_unknown_run_and_unusable_judge_exit_2(self, stored_run: str, suite: Path) -> None:
+        no_run = CliRunner().invoke(app, ["rejudge", "nope", str(suite)])
+        bad_judge = CliRunner().invoke(
+            app, ["rejudge", stored_run, str(suite), "--judge", "nonsense"]
+        )
+
+        assert (no_run.exit_code, bad_judge.exit_code) == (2, 2)
+        assert "no stored run 'nope'" in no_run.output
+        assert "judge: Unknown model: nonsense" in bad_judge.output
