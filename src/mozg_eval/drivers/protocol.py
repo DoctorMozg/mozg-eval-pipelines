@@ -25,6 +25,10 @@ class Capabilities(StrictModel):
     hooks: Support = "none"
     usage: Literal["usd", "tokens", "none"] = "none"
     isolation: Literal["none", "home", "container"] = "none"
+    host_shell: bool = Field(
+        default=True,
+        description="cases that grant shell may run it on the host, outside any sandbox",
+    )
     tools: list[ToolKind] = Field(
         default_factory=list, description="tool kinds whose calls the driver reports"
     )

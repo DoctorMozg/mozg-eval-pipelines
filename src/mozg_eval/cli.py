@@ -10,6 +10,7 @@ from pydantic import JsonValue
 from mozg_eval import __version__
 from mozg_eval.drivers.claude import ClaudeDriver
 from mozg_eval.drivers.codex import CodexDriver
+from mozg_eval.drivers.opencode import OpenCodeDriver
 from mozg_eval.grading.stats import SuiteStats
 from mozg_eval.grading.support import DriverSupport
 from mozg_eval.importers.claude_plugin_eval import (
@@ -37,11 +38,13 @@ app = typer.Typer(
 class DriverName(StrEnum):
     claude = "claude"
     codex = "codex"
+    opencode = "opencode"
 
 
-DRIVERS: dict[DriverName, type[ClaudeDriver | CodexDriver]] = {
+DRIVERS: dict[DriverName, type[ClaudeDriver | CodexDriver | OpenCodeDriver]] = {
     DriverName.claude: ClaudeDriver,
     DriverName.codex: CodexDriver,
+    DriverName.opencode: OpenCodeDriver,
 }
 
 import_app = typer.Typer(help="Convert cases from other eval tools.", no_args_is_help=True)

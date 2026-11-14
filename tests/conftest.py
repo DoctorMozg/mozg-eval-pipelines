@@ -34,6 +34,12 @@ def fake_codex(tmp_path: Path) -> Path:
 
 
 @pytest.fixture
+def fake_agent(tmp_path: Path) -> Path:
+    """An executable agent CLI that replays a recorded stream; see drivers/fake_agent.py."""
+    return _wrap("fake_agent.py", tmp_path / "agent")
+
+
+@pytest.fixture
 def claude_plugin(tmp_path: Path) -> Path:
     """A Claude plugin with one skill that names its own root and three kinds of hook."""
     root = tmp_path / "src" / "notes"

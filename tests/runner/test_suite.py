@@ -189,6 +189,40 @@ class TestRunCommand:
         stores.results.close()
         assert trial.driver == "codex"
 
+    @pytest.mark.parametrize(("driver", "cost"), [("opencode", "$0.0011")])
+    def test_driver_without_a_sandbox_runs_a_skill_case(
+        self, suite: Path, fake_agent: Path, tmp_path: Path, driver: str, cost: str
+    ) -> None:
+        manifest = tmp_path / "plugins" / "mz-memory" / ".claude-plugin" / "plugin.json"
+        manifest.parent.mkdir()
+        manifest.write_text('{"name": "mz-memory"}')
+        case = suite / "case.mzeval.yaml"
+        fixture = SKILL_FIRE.with_name(f"{driver}_skill_fire.jsonl")
+        case.write_text(
+            case.read_text()
+            .replace("skill: memory-note", "skill: probe-skill")
+            .replace(str(SKILL_FIRE), str(fixture))
+        )
+        argv = ["run", str(suite), "--runs", "1", "--driver", driver]
+
+        result = CliRunner().invoke(app, [*argv, "--executable", str(fake_agent)])
+
+        assert result.exit_code == 0, result.output
+        assert f"PASS remember-decision #1: ok, skills: probe-skill, {cost}" in result.output
+
+    def test_shell_case_is_skipped_on_a_driver_without_a_sandbox(
+        self, suite: Path, fake_agent: Path, tmp_path: Path
+    ) -> None:
+        case = suite / "case.mzeval.yaml"
+        case.write_text(case.read_text().replace("tools: [skill]", "tools: [skill, shell]"))
+        argv = ["run", str(suite), "--driver", "opencode", "--executable", str(fake_agent)]
+
+        result = CliRunner().invoke(app, argv)
+
+        assert result.exit_code == 0, result.output
+        assert "0 trials" in result.output
+        assert not (tmp_path / "record.json").exists()
+
     def test_case_with_nothing_codex_can_grade_is_skipped(
         self, suite: Path, fake_codex: Path, tmp_path: Path
     ) -> None:
