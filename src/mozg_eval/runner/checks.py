@@ -38,8 +38,16 @@ def needs_workspace(grader: Grader) -> bool:
     return isinstance(grader, CommandGrader | FileExistsGrader)
 
 
+# Running the code under test writes these; they are never the agent's own edits.
+_UNTRACKED_DIRS = {".git", "__pycache__", ".pytest_cache"}
+
+
 def snapshot(workspace: Path) -> Snapshot:
-    files = (p for p in workspace.rglob("*") if p.is_file() and ".git" not in p.parts)
+    files = (
+        p
+        for p in workspace.rglob("*")
+        if p.is_file() and _UNTRACKED_DIRS.isdisjoint(p.relative_to(workspace).parts)
+    )
     return {
         p.relative_to(workspace).as_posix(): hashlib.sha256(p.read_bytes()).hexdigest()
         for p in files
@@ -107,6 +115,7 @@ class WorkspaceChecks:
             change.path
             for change in self.changes()
             if change.change != "deleted"
+            and grader.change in (None, change.change)
             and (grader.path_match is None or re.search(grader.path_match, change.path))
             and content.search(Path(change.path).read_text(errors="replace"))
         ]

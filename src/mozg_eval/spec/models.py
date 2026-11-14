@@ -171,6 +171,9 @@ class FileChangedGrader(GraderBase):
     content_match: str | None = Field(
         None, description="regex over the file's text after the run; deleted files never match"
     )
+    change: Literal["created", "modified", "deleted"] | None = Field(
+        None, description="count only files changed this way"
+    )
 
     @model_validator(mode="after")
     def _regex(self) -> Self:

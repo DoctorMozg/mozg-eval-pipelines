@@ -163,6 +163,7 @@ class TrialGrader:
             case FileChangedGrader():
                 return sum(
                     isinstance(p, FileChange)
+                    and grader.change in (None, p.change)
                     and (grader.path_match is None or bool(re.search(grader.path_match, p.path)))
                     for p in payloads
                 )

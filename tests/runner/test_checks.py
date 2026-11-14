@@ -28,7 +28,7 @@ def workspace(tmp_path: Path) -> Path:
 
 @pytest.fixture
 def checks(workspace: Path) -> WorkspaceChecks:
-    """The agent's run: one file edited, one deleted, two created, git internals touched."""
+    """The agent's run: one file edited, one deleted, two created; git and test caches touched."""
     before = snapshot(workspace)
     (workspace / "edited.txt").write_text("after")
     (workspace / "gone.txt").unlink()
@@ -36,6 +36,10 @@ def checks(workspace: Path) -> WorkspaceChecks:
     (workspace / "docs" / "plan.md").write_text("TODO one\nTODO two\n")
     (workspace / "out.json").write_text("{}")
     (workspace / ".git" / "index").write_text("x")
+    (workspace / "docs" / "__pycache__").mkdir()
+    (workspace / "docs" / "__pycache__" / "plan.cpython-313.pyc").write_bytes(b"\x00")
+    (workspace / ".pytest_cache").mkdir()
+    (workspace / ".pytest_cache" / "README.md").write_text("cache")
     return WorkspaceChecks(workspace, before, {"PATH": "/usr/bin:/bin", "HOME": "/nowhere"})
 
 
@@ -44,7 +48,7 @@ def check(checks: WorkspaceChecks, **fields: object) -> CheckResult:
 
 
 class TestChanges:
-    def test_diff_against_the_snapshot_ignores_git(
+    def test_diff_against_the_snapshot_ignores_git_and_test_caches(
         self, checks: WorkspaceChecks, workspace: Path
     ) -> None:
         assert checks.changes() == [
@@ -111,6 +115,11 @@ class TestFileChangedContent:
 
         assert planned.passed
         assert deleted.passed
+
+    def test_change_kind_narrows(self, checks: WorkspaceChecks) -> None:
+        result = check(checks, type="file_changed", change="modified", content_match="after|TODO")
+
+        assert (result.passed, result.detail) == (True, str(checks.workspace / "edited.txt"))
 
 
 class TestCommand:

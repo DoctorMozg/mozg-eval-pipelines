@@ -125,9 +125,10 @@ class TestEventGraders:
             events,
             {"type": "file_changed", "path_match": r"MEMORY\.md$"},
             {"type": "file_changed", "min": 3},
+            {"type": "file_changed", "change": "created", "path_match": r"notes"},
         )
 
-        assert verdicts(results) == {"g0": "pass", "g1": "fail"}
+        assert verdicts(results) == {"g0": "pass", "g1": "fail", "g2": "fail"}
 
     def test_hook_fired_without_an_event_matches_any_hook(self) -> None:
         events = events_of([HookFired(event="UserPromptSubmit", output="pnpm exclusively")])

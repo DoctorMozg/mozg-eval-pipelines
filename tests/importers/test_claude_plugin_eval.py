@@ -136,20 +136,45 @@ class TestGraders:
             **limits,
         }
 
-    def test_file_target_and_created_files(self, convert: Convert) -> None:
+    def test_file_target_reads_that_file(self, convert: Convert) -> None:
+        grader = {
+            "name": "a",
+            "type": "regex",
+            "pattern": "x",
+            "target": {"source": "file", "path": "out.md"},
+        }
+
+        [converted] = convert(case_11([grader], tags=["gate"])).case["graders"]
+
+        assert converted["target"] == {"file": "out.md"}
+
+    def test_files_target_matches_each_created_path(self, convert: Convert) -> None:
         graders: list[dict[str, Any]] = [
             {
-                "name": "a",
+                "name": "outside",
                 "type": "regex",
-                "pattern": "x",
-                "target": {"source": "file", "path": "out.md"},
+                "pattern": "^(?!(?:.*/)?\\.mz/).+",
+                "target": "files",
+                "match": "not_contains",
+                "flags": "im",
             },
-            {"name": "b", "type": "regex", "pattern": "y", "target": "files"},
+            {"name": "none", "type": "regex", "pattern": "\\S", "target": "files"},
         ]
 
-        converted = convert(case_11(graders, tags=["gate"])).case["graders"]
+        result = convert(case_11(graders, tags=["gate"]))
 
-        assert [g["target"] for g in converted] == [{"file": "out.md"}, "created_files"]
+        assert result.case["graders"] == [
+            {
+                "name": "outside",
+                "type": "file_changed",
+                "change": "created",
+                "path_match": "(?i)^(?!(?:.*/)?\\.mz/).+",
+                "min": 0,
+                "max": 0,
+            },
+            {"name": "none", "type": "file_changed", "change": "created", "path_match": "\\S"},
+        ]
+        assert [f.grader for f in result.flags] == ["outside"]
 
     def test_trace_regex_with_no_portable_shape_is_kept_for_claude(self, convert: Convert) -> None:
         grader = {"name": "hook", "type": "regex", "pattern": "hook_response", "target": "trace"}

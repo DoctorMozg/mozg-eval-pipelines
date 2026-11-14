@@ -272,7 +272,7 @@ drivers: { exclude: [pi] }      # optional, e.g. needs subagents
 graders into labelled data for precision, recall and the confusion matrix.
 
 Deterministic graders: `skill`, `subagent`, `tool_called{kind, match, path_match}`, `tool_order`,
-`file_changed{path_match, content_match}`,
+`file_changed{path_match, content_match, change?}`,
 `regex{target: final|transcript|replies|tool_results|created_files|{file}}`, `file_exists`,
 `command` (a script that runs in the workspace after the session and passes on exit 0, which
 `claude plugin eval` lacks), and `hook_fired{event?, match}`. Escape hatch:

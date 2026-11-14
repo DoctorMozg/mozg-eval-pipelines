@@ -350,6 +350,8 @@ class _CaseConverter:
             if "i" in raw_flags:
                 rewrite = ignoring_case(rewrite)
             return self._rewritten(grader["name"], rewrite, limits)
+        if target == "files":
+            return self._created_paths(grader, limits)
         if target == "trace":
             self._note("regex trace -> raw_regex claude")
             self._flag(grader["name"], "regex over Claude's trace: kept as raw_regex, Claude only")
@@ -368,6 +370,16 @@ class _CaseConverter:
             **flags,
             **limits,
         }
+
+    def _created_paths(self, grader: RawGrader, limits: dict[str, int]) -> dict[str, Any]:
+        """1.1 `target: files` matches created paths, not contents; each path is checked alone."""
+        self._note("regex files -> file_changed created path_match")
+        # `m` only re-anchored `^` to each line of the joined path list.
+        inline = str(grader.get("flags", "")).replace("m", "")
+        pattern = f"(?{inline}){grader['pattern']}" if inline else grader["pattern"]
+        if grader["pattern"].startswith("^"):
+            self._flag(grader["name"], "path_match runs over absolute paths; check the anchors")
+        return {"type": "file_changed", "change": "created", "path_match": pattern, **limits}
 
     def _target(self, target: str | dict[str, str]) -> str | dict[str, str]:
         if isinstance(target, dict):
