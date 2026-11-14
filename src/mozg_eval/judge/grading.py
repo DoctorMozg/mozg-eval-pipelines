@@ -1,6 +1,7 @@
 """Grades a case's `judge` graders from a trial's events, and from files while they exist."""
 
 from collections.abc import Iterable, Mapping, Sequence
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Self
 
@@ -9,7 +10,7 @@ from pydantic_ai.models import Model
 
 from mozg_eval.events.models import FileChange, Payload
 from mozg_eval.grading.graders import event_texts
-from mozg_eval.grading.models import GradeResult
+from mozg_eval.grading.models import GradeResult, JudgeSpend
 from mozg_eval.grading.models import Verdict as GradeVerdict
 from mozg_eval.judge.cache import JudgeCache
 from mozg_eval.judge.verdict import CriterionJudge, Verdict
@@ -43,6 +44,12 @@ def _combined(grader: JudgeGrader, verdicts: list[Verdict]) -> GradeResult:
     )
 
 
+@dataclass(frozen=True)
+class JudgedTrial:
+    grades: list[GradeResult] = field(default_factory=list)
+    spend: list[JudgeSpend] = field(default_factory=list)
+
+
 class JudgeSetupError(ValueError):
     """A judge model that can't be used, such as an unknown name or a missing API key."""
 
@@ -70,21 +77,31 @@ class TrialJudge:
 
     async def grade(
         self, case: Case, payloads: Sequence[Payload], workspace: Path | None
-    ) -> list[GradeResult]:
-        results = []
+    ) -> JudgedTrial:
+        judged = JudgedTrial()
         for grader in case.graders:
             if isinstance(grader, JudgeGrader):
-                results.append(await self._grade(grader, payloads, workspace))
-        return results
+                await self._grade(grader, payloads, workspace, judged)
+        return judged
 
     async def _grade(
-        self, grader: JudgeGrader, payloads: Sequence[Payload], workspace: Path | None
-    ) -> GradeResult:
+        self,
+        grader: JudgeGrader,
+        payloads: Sequence[Payload],
+        workspace: Path | None,
+        into: JudgedTrial,
+    ) -> None:
         judge = self.named[grader.model] if grader.model else self.default
 
-        def not_judged(why: str) -> GradeResult:
-            return GradeResult(
-                name=grader.name, verdict="n/a", detail=why, weight=grader.weight, arm=grader.arm
+        def not_judged(why: str) -> None:
+            into.grades.append(
+                GradeResult(
+                    name=grader.name,
+                    verdict="n/a",
+                    detail=why,
+                    weight=grader.weight,
+                    arm=grader.arm,
+                )
             )
 
         if judge is None:
@@ -94,7 +111,10 @@ class TrialJudge:
         evidence = _evidence(grader, payloads, workspace)
         if evidence is None:
             return not_judged("the judge reads files, and the trial's workspace is gone")
-        return _combined(grader, [await judge.judge(item, evidence) for item in grader.checklist])
+        judgements = [await judge.judge(item, evidence) for item in grader.checklist]
+        into.grades.append(_combined(grader, [j.verdict for j in judgements]))
+        into.spend.extend(j.spend for j in judgements if j.spend is not None)
+        return None
 
 
 def merged(grades: Sequence[GradeResult], judged: Sequence[GradeResult]) -> list[GradeResult]:

@@ -192,7 +192,7 @@ class SuiteRunner:
                     await self.stores.artifacts.put(self.ws, ref, _file_chunks(raw_dir / name))
             raw_log = raw_dir / "raw.jsonl"
             raw = raw_log.read_text(errors="replace") if raw_log.exists() else None
-        grades = merged(TrialGrader(case, self.support, raw).grade(events), judged)
+        grades = merged(TrialGrader(case, self.support, raw).grade(events), judged.grades)
         status, cost = _outcome(events)
         record = TrialRecord(
             id=trial_id,

@@ -42,7 +42,7 @@ def cache(tmp_path: Path) -> JudgeCache:
 def grade(
     judge: TrialJudge, the_case: Case, workspace: Path | None = None
 ) -> dict[str, GradeResult]:
-    return {g.name: g for g in asyncio.run(judge.grade(the_case, PAYLOADS, workspace))}
+    return {g.name: g for g in asyncio.run(judge.grade(the_case, PAYLOADS, workspace)).grades}
 
 
 class TestTrialJudge:
@@ -110,7 +110,7 @@ class TestTrialJudge:
         judge = TrialJudge.for_cases([the_case], quoting_judge("pass"), cache)
         created = FileChange(path=str(tmp_path / "new.md"), change="created")
 
-        [result] = asyncio.run(judge.grade(the_case, [*PAYLOADS, created], tmp_path))
+        [result] = asyncio.run(judge.grade(the_case, [*PAYLOADS, created], tmp_path)).grades
 
         assert result.detail == "1. pass: 'draft listing'"
 

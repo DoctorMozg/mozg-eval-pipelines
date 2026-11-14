@@ -32,11 +32,11 @@ class Rejudger:
         for trial in trials:
             events = [e async for e in self.stores.events.read(self.ws, run_id, trial.id)]
             judged = await self.judge.grade(cases[trial.case], [e.payload for e in events], None)
-            if not judged:
+            if not judged.grades:
                 continue
-            grades = merged(stored.get(trial.id, []), judged)
+            grades = merged(stored.get(trial.id, []), judged.grades)
             passed = TrialGrader.passed(events, grades)
-            results.regrade(self.ws, trial.id, judged, passed)
+            results.regrade(self.ws, trial.id, judged.grades, passed)
             record = trial.model_copy(update={"passed": passed})
             summaries.append(TrialSummary(case=trial.case, record=record, grades=grades))
         log.info("rejudged %d of %d trials in run %s", len(summaries), len(trials), run_id)

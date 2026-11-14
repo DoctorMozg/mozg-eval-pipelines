@@ -7,7 +7,9 @@ from typing import Literal
 from pydantic import BaseModel
 from pydantic_ai import Agent, ModelRetry, RunContext, UnexpectedModelBehavior
 from pydantic_ai.models import Model
+from pydantic_ai.usage import RunUsage
 
+from mozg_eval.grading.models import JudgeSpend
 from mozg_eval.judge.cache import JudgeCache
 
 log = logging.getLogger(__name__)
@@ -35,6 +37,12 @@ class Verdict(BaseModel):
 @dataclass
 class JudgeContext:
     evidence: str
+
+
+@dataclass(frozen=True)
+class Judgement:
+    verdict: Verdict
+    spend: JudgeSpend | None  # None on a cache hit
 
 
 def _squashed(text: str) -> str:
@@ -70,19 +78,31 @@ class CriterionJudge:
         )
         self._agent.output_validator(_evidence_is_real)
 
-    async def judge(self, criterion: str, evidence: str) -> Verdict:
+    async def judge(self, criterion: str, evidence: str) -> Judgement:
         key = JudgeCache.key(evidence, criterion, self.model, INSTRUCTIONS)
         if cached := self.cache.get(key):
             log.debug("judge cache hit for %r", criterion[:60])
-            return Verdict.model_validate_json(cached)
+            return Judgement(Verdict.model_validate_json(cached), None)
         prompt = f"<criterion>\n{criterion}\n</criterion>\n<evidence>\n{evidence}\n</evidence>"
+        # Passed in so the spend of a rejected run, retries included, is still counted.
+        usage = RunUsage()
         try:
-            result = await self._agent.run(prompt, deps=JudgeContext(evidence))
+            result = await self._agent.run(prompt, deps=JudgeContext(evidence), usage=usage)
         except UnexpectedModelBehavior as exc:
             # Not cached: the next rejudge should give the model another chance.
             log.warning(
                 "judge %s gave no acceptable verdict on %r: %s", self.model, criterion[:60], exc
             )
-            return Verdict(reasoning=f"rejected: {exc}", verdict="unknown", evidence_quote="")
+            rejected = Verdict(reasoning=f"rejected: {exc}", verdict="unknown", evidence_quote="")
+            return Judgement(rejected, self._spend(usage))
         self.cache.put(key, result.output.model_dump_json())
-        return result.output
+        return Judgement(result.output, self._spend(usage))
+
+    def _spend(self, usage: RunUsage) -> JudgeSpend:
+        cost = None if usage.cost is None else float(usage.cost)
+        return JudgeSpend(
+            model=self.model,
+            input_tokens=usage.input_tokens,
+            output_tokens=usage.output_tokens,
+            cost_usd=cost,
+        )

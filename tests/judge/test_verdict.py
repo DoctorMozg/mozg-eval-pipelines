@@ -6,7 +6,7 @@ from pydantic_ai.messages import ModelMessage, ModelResponse, ToolCallPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 
 from mozg_eval.judge.cache import JudgeCache
-from mozg_eval.judge.verdict import CriterionJudge, Verdict
+from mozg_eval.judge.verdict import CriterionJudge, Judgement, Verdict
 
 EVIDENCE = "Title: The Harbour Wakes\nThe film holds no twist,\n  so the title promises none."
 CRITERION = "PASS if the reply says the film holds no twist."
@@ -33,7 +33,8 @@ def cache(tmp_path: Path) -> JudgeCache:
 
 
 def judge(script: ScriptedJudge, cache: JudgeCache, criterion: str = CRITERION) -> Verdict:
-    return asyncio.run(CriterionJudge(FunctionModel(script), cache).judge(criterion, EVIDENCE))
+    judged = CriterionJudge(FunctionModel(script), cache).judge(criterion, EVIDENCE)
+    return asyncio.run(judged).verdict
 
 
 class TestEvidence:
@@ -84,3 +85,44 @@ class TestCache:
         judge(script, cache, criterion="PASS if the title names the harbour.")
 
         assert script.calls == 2
+
+
+class TestSpend:
+    """A FunctionModel named after a real model is priced by genai-prices, like a real judge."""
+
+    def judgement(self, script: ScriptedJudge, cache: JudgeCache) -> Judgement:
+        model = FunctionModel(script, model_name="claude-haiku-4-5")
+        return asyncio.run(CriterionJudge(model, cache).judge(CRITERION, EVIDENCE))
+
+    def test_paid_call_reports_tokens_and_cost_and_a_cache_hit_costs_nothing(
+        self, cache: JudgeCache
+    ) -> None:
+        script = ScriptedJudge("The film holds no twist,")
+
+        paid = self.judgement(script, cache)
+        cached = self.judgement(script, cache)
+
+        assert paid.spend is not None
+        assert paid.spend.input_tokens > 0
+        assert (paid.spend.cost_usd or 0) > 0
+        assert cached.spend is None
+
+    def test_rejected_verdict_still_counts_every_retry(self, cache: JudgeCache) -> None:
+        once = self.judgement(
+            ScriptedJudge("The film holds no twist,"), JudgeCache(cache.root / "x")
+        )
+        rejected = self.judgement(ScriptedJudge("The twist is that he never returns."), cache)
+
+        assert once.spend is not None
+        assert rejected.spend is not None
+        assert rejected.verdict.verdict == "unknown"
+        assert rejected.spend.input_tokens > 2 * once.spend.input_tokens
+
+    def test_unpriced_model_has_no_cost(self, cache: JudgeCache) -> None:
+        script = ScriptedJudge("The film holds no twist,")
+        judged = asyncio.run(
+            CriterionJudge(FunctionModel(script), cache).judge(CRITERION, EVIDENCE)
+        )
+
+        assert judged.spend is not None
+        assert judged.spend.cost_usd is None
