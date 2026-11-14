@@ -1,17 +1,23 @@
+import asyncio
 import json
 from pathlib import Path
 from typing import Annotated
 
 import typer
+from pydantic import JsonValue
 
 from mozg_eval import __version__
+from mozg_eval.drivers.claude import ClaudeDriver
 from mozg_eval.importers.claude_plugin_eval import (
     CaseImportError,
     ClaudePluginEvalImporter,
     render_report,
 )
+from mozg_eval.runner.suite import FixtureError, SuiteRunner
 from mozg_eval.spec.loader import CASE_FILENAME, CaseLoader, CaseLoadError
 from mozg_eval.spec.models import Case
+from mozg_eval.storage.base import DEFAULT_WORKSPACE
+from mozg_eval.storage.config import StorageConfig, open_stores
 
 app = typer.Typer(
     name="mzeval",
@@ -67,6 +73,56 @@ def lint(
     typer.echo(f"{len(files) - invalid} of {len(files)} case files valid")
     if invalid:
         raise typer.Exit(1)
+
+
+@app.command()
+def run(
+    paths: Annotated[
+        list[Path],
+        typer.Argument(
+            exists=True, help=f"Case files, or directories to search for {CASE_FILENAME}."
+        ),
+    ],
+    runs: Annotated[int | None, typer.Option(min=1, help="Repeats per case.")] = None,
+    model: Annotated[str | None, typer.Option(help="Model for every case.")] = None,
+    claude: Annotated[str, typer.Option(help="The claude executable.")] = "claude",
+) -> None:
+    """Run cases on Claude Code; exit 2 if any trial ended in an error or timeout."""
+    files = CaseLoader.discover(paths)
+    if not files:
+        typer.echo(f"no {CASE_FILENAME} found under: {', '.join(map(str, paths))}", err=True)
+        raise typer.Exit(2)
+    overrides: dict[str, JsonValue] = {
+        key: value for key, value in {"runs": runs, "model": model}.items() if value is not None
+    }
+    stores = open_stores(StorageConfig.load(Path.cwd()))
+    suite = SuiteRunner(
+        stores,
+        "claude",
+        lambda home, raw_dir: ClaudeDriver(home, raw_dir, executable=claude),
+        DEFAULT_WORKSPACE,
+        overrides,
+    )
+    try:
+        record, trials = asyncio.run(suite.run(files))
+    except CaseLoadError as exc:
+        for issue in exc.issues:
+            typer.echo(str(issue), err=True)
+        raise typer.Exit(2) from exc
+    except FixtureError as exc:
+        typer.echo(f"fixture failed: {exc}", err=True)
+        raise typer.Exit(2) from exc
+    finally:
+        stores.results.close()
+    for trial in trials:
+        cost = "n/a" if trial.record.cost_usd is None else f"${trial.record.cost_usd:.4f}"
+        skills = ", ".join(trial.skills) or "none"
+        typer.echo(
+            f"{trial.case} #{trial.record.repeat}: {trial.record.status}, skills: {skills}, {cost}"
+        )
+    typer.echo(f"run {record.id}: {len(trials)} trials")
+    if any(trial.record.status in ("error", "timeout") for trial in trials):
+        raise typer.Exit(2)
 
 
 @app.command()

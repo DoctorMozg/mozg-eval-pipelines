@@ -584,6 +584,13 @@ Pi and OpenCode have no sandbox at all. Shell-granted cases for them run with th
 isolation** option, not on the host. Until that option lands (section 6, Later), the runner skips
 those cases with a reason instead of running them on the host.
 
+**Known limitation: running mzeval from inside Claude Code in auto mode** (found 2026-11-14). The
+Claude driver starts `claude -p --permission-mode=bypassPermissions`, because a headless session
+can't answer permission prompts. Claude Code's auto-mode classifier lets that through when the case
+offers only `Skill`, but blocks it once `Bash` is in the tool set. So an agent session in auto mode
+can run routing cases and not shell-granted ones. Run those from a plain terminal or in CI, or add
+a permission rule for `mzeval run`.
+
 ## 5. Tech stack
 
 | Concern                  | Choice                                                                                                                                                                      | Why                                                                                                                                     |

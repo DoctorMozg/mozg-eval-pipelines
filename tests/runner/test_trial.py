@@ -8,7 +8,16 @@ import pytest
 
 from mozg_eval.drivers import protocol
 from mozg_eval.drivers.protocol import DriverManifest, Limits, StdioDriver, TrialRequest
-from mozg_eval.events.models import End, Error, Event, Message, Start, ToolCall, Usage
+from mozg_eval.events.models import (
+    End,
+    Error,
+    Event,
+    Message,
+    Start,
+    ToolCall,
+    ToolResult,
+    Usage,
+)
 from mozg_eval.runner.settings import resolve_settings
 from mozg_eval.runner.trial import CostGuard, ForbiddenToolGuard, Guard, TrialRunner, TurnGuard
 from mozg_eval.spec.models import Execution
@@ -107,6 +116,12 @@ class TestTrialRunner:
 
         assert time.monotonic() - began < 5
         assert end_of(events).status == "cancelled"
+
+    def test_line_longer_than_the_default_stream_limit_is_read(self, trial: Trial) -> None:
+        events = trial("long")
+
+        assert count(events, ToolResult) == 1
+        assert end_of(events).status == "ok"
 
     def test_invalid_event_is_logged_and_stops_the_driver(self, trial: Trial) -> None:
         events = trial("garbage")

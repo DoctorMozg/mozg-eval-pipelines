@@ -1,6 +1,9 @@
 """The three stores between the core and storage; nothing above them builds paths or writes SQL."""
 
+import os
 import re
+import time
+import uuid
 from collections.abc import AsyncIterator, Sequence
 from typing import Literal, Protocol
 
@@ -13,6 +16,15 @@ DEFAULT_WORKSPACE = "local"
 
 # Ids become path segments on disk, so every backend accepts the same safe alphabet.
 _ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$")
+
+
+def new_id() -> str:
+    """A UUIDv7 (RFC 9562): sortable by creation time, so ids never clash across databases."""
+    millis = time.time_ns() // 1_000_000
+    rand = int.from_bytes(os.urandom(10))
+    rand_a, rand_b = rand >> 68, rand & (2**62 - 1)
+    value = (millis << 80) | (0x7 << 76) | (rand_a << 64) | (0b10 << 62) | rand_b
+    return str(uuid.UUID(int=value))
 
 
 def check_id(value: str, what: str) -> str:

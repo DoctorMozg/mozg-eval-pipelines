@@ -17,6 +17,8 @@ log = logging.getLogger(__name__)
 
 # How long a driver has to exit after a cancel before it is killed.
 CANCEL_GRACE_S = 5.0
+# A line can hold a whole skill body or tool output; asyncio's default limit is 64 KiB.
+LINE_LIMIT = 16 << 20
 
 type Support = Literal["native", "inferred", "none"]
 
@@ -109,6 +111,7 @@ class StdioDriver:
                 stdout=asyncio.subprocess.PIPE,
                 stderr=stderr,
                 cwd=request.workspace,
+                limit=LINE_LIMIT,
             )
             await self._send(request.model_dump_json())
             assert process.stdout is not None

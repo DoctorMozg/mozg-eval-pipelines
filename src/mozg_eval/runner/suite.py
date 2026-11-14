@@ -1,0 +1,158 @@
+"""Runs a suite's cases on one driver: a fresh workspace and HOME per trial, results stored."""
+
+import asyncio
+import logging
+import os
+import tempfile
+from collections.abc import AsyncIterator, Callable, Mapping, Sequence
+from dataclasses import dataclass, field
+from datetime import UTC, datetime
+from pathlib import Path
+
+from pydantic import JsonValue
+
+from mozg_eval.drivers.protocol import Driver, Limits, TrialRequest
+from mozg_eval.events.models import End, EndStatus, Event, SkillActivated, Usage
+from mozg_eval.runner.settings import resolve_settings
+from mozg_eval.runner.trial import TrialRunner, TurnGuard
+from mozg_eval.spec.loader import CaseLoader
+from mozg_eval.spec.models import Case
+from mozg_eval.storage.base import ArtifactRef, RunRecord, TrialRecord, new_id
+from mozg_eval.storage.config import Stores
+
+log = logging.getLogger(__name__)
+
+# (home, raw_dir) -> a driver for one trial; drivers keep per-trial process state.
+type DriverFactory = Callable[[Path, Path], Driver]
+
+
+class FixtureError(RuntimeError):
+    pass
+
+
+@dataclass(frozen=True)
+class TrialSummary:
+    case: str
+    record: TrialRecord
+    skills: list[str] = field(default_factory=list)
+
+
+async def _file_chunks(path: Path) -> AsyncIterator[bytes]:
+    yield path.read_bytes()
+
+
+async def _exec(*argv: str, cwd: Path, env: Mapping[str, str] | None = None) -> None:
+    process = await asyncio.create_subprocess_exec(
+        *argv,
+        cwd=cwd,
+        env=env,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.STDOUT,
+    )
+    out, _ = await process.communicate()
+    if process.returncode != 0:
+        raise FixtureError(f"{' '.join(argv)} exited with {process.returncode}: {out.decode()}")
+
+
+def _outcome(events: list[Event]) -> tuple[EndStatus, float | None]:
+    end = events[-1].payload
+    assert isinstance(end, End)
+    costs = [
+        e.payload.cost_usd
+        for e in events
+        if isinstance(e.payload, Usage) and e.payload.cost_usd is not None
+    ]
+    return end.status, sum(costs) if costs else None
+
+
+class SuiteRunner:
+    def __init__(
+        self,
+        stores: Stores,
+        driver_name: str,
+        make_driver: DriverFactory,
+        ws: str,
+        overrides: Mapping[str, JsonValue],
+    ) -> None:
+        self.stores = stores
+        self.driver_name = driver_name
+        self.make_driver = make_driver
+        self.ws = ws
+        self.overrides = overrides
+
+    def runnable(self, case: Case) -> str | None:
+        """Return why the case can't run on this driver yet, or None."""
+        drivers = case.drivers
+        if (drivers.only is not None and self.driver_name not in drivers.only) or (
+            self.driver_name in drivers.exclude
+        ):
+            return f"case excludes driver {self.driver_name}"
+        if case.history_file or case.add_dirs:
+            return "history_file and add_dirs are not supported yet"
+        return None
+
+    async def run(self, case_files: Sequence[Path]) -> tuple[RunRecord, list[TrialSummary]]:
+        loader = CaseLoader()
+        cases = [(path.parent, loader.load(path)) for path in case_files]
+        run = RunRecord(id=new_id(), started_at=datetime.now(UTC), trigger="local")
+        self.stores.results.add_run(self.ws, run)
+        log.info("run %s: %d cases on %s", run.id, len(cases), self.driver_name)
+        summaries = []
+        for case_dir, case in cases:
+            if reason := self.runnable(case):
+                log.warning("skipping %s: %s", case.name, reason)
+                continue
+            execution = case.execution.model_copy(update=self.overrides)
+            for repeat in range(1, execution.runs + 1):
+                summaries.append(await self._trial(run, case_dir, case, repeat))
+        return run, summaries
+
+    async def _trial(self, run: RunRecord, case_dir: Path, case: Case, repeat: int) -> TrialSummary:
+        execution = case.execution.model_copy(update=self.overrides)
+        trial_id = new_id()
+        # The temp dir holds the workspace and the HOME with linked credentials; both go with it.
+        with tempfile.TemporaryDirectory(prefix="mzeval-") as tmp:
+            workspace, home, raw_dir = Path(tmp, "ws"), Path(tmp, "home"), Path(tmp, "raw")
+            workspace.mkdir()
+            home.mkdir()
+            await _exec("git", "init", "-q", ".", cwd=workspace)
+            if case.fixture:
+                fixture_env = os.environ | {"HOME": str(home)}
+                await _exec("bash", str(case_dir / case.fixture), cwd=workspace, env=fixture_env)
+            request = TrialRequest(
+                trial=trial_id,
+                prompt=execution.prompt,
+                workspace=str(workspace),
+                env=execution.env,
+                plugins=[str((case_dir / plugin).resolve()) for plugin in case.bundle],
+                tools=execution.tools,
+                model=execution.model,
+                append_system_prompt=execution.append_system_prompt,
+                limits=Limits(max_turns=execution.max_turns, timeout_s=execution.timeout_s),
+            )
+            runner = TrialRunner(
+                self.ws,
+                run.id,
+                self.make_driver(home, raw_dir),
+                self.stores.events,
+                [TurnGuard(execution.max_turns)],
+            )
+            events = await runner.run(request, resolve_settings(case.execution, self.overrides))
+            for name in ("raw.jsonl", "stderr.log"):
+                if (raw_dir / name).exists():
+                    ref = ArtifactRef(run=run.id, trial=trial_id, name=name)
+                    await self.stores.artifacts.put(self.ws, ref, _file_chunks(raw_dir / name))
+        status, cost = _outcome(events)
+        record = TrialRecord(
+            id=trial_id,
+            run=run.id,
+            case=case.name,
+            arm="with",
+            repeat=repeat,
+            driver=self.driver_name,
+            status=status,
+            cost_usd=cost,
+        )
+        self.stores.results.add_trial(self.ws, record)
+        skills = [e.payload.skill for e in events if isinstance(e.payload, SkillActivated)]
+        return TrialSummary(case=case.name, record=record, skills=skills)

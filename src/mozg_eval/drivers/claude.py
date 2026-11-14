@@ -44,8 +44,6 @@ CLAUDE_TOOL_KINDS: dict[str, ToolKind] = {name: kind for kind, name in CLAUDE_TO
 # Auth variables a run may legitimately pass through; every other CLAUDE* variable is the
 # parent session's state (effort, subagent model, session ids) and would leak into the trial.
 _KEEP_ENV = {"CLAUDE_CODE_OAUTH_TOKEN"}
-# stream-json puts a whole skill body or tool output on one line.
-_LINE_LIMIT = 16 << 20
 
 
 class _Loose(BaseModel):
@@ -247,7 +245,7 @@ class ClaudeDriver:
                 stderr=stderr,
                 cwd=request.workspace,
                 env=env,
-                limit=_LINE_LIMIT,
+                limit=protocol.LINE_LIMIT,
             )
             assert process.stdin is not None
             assert process.stdout is not None

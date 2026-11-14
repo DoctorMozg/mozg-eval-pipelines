@@ -1,6 +1,7 @@
 """A stdio driver for tests: each step is one assistant turn, one shell call and $0.10 of usage.
 
-Modes (argv[1]): ok, slow (1 s a step), garbage (an invalid line first), stubborn (ignores cancel).
+Modes (argv[1]): ok, slow (1 s a step), garbage (an invalid line first), stubborn (ignores
+cancel), long (a 1 MiB tool result first).
 """
 
 import json
@@ -29,6 +30,8 @@ def main() -> None:
     emit({"type": "message", "role": "user", "text": request["prompt"]})
     if mode == "garbage":
         print('{"type": "teleport"}', flush=True)
+    if mode == "long":
+        emit({"type": "tool_result", "id": "big", "ok": True, "output": "x" * (1 << 20)})
     steps = 10**6 if mode == "stubborn" else 5
     for step in range(steps):
         if cancelled.wait(1.0 if mode == "slow" else 0.02):
