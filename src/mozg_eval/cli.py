@@ -14,6 +14,7 @@ from mozg_eval.importers.claude_plugin_eval import (
     ClaudePluginEvalImporter,
     render_report,
 )
+from mozg_eval.report.html import ReportBuilder
 from mozg_eval.runner.suite import FixtureError, SuiteRunner
 from mozg_eval.spec.loader import CASE_FILENAME, CaseLoader, CaseLoadError
 from mozg_eval.spec.models import Case
@@ -143,6 +144,29 @@ def run(
     if stats.failing():
         typer.echo("below threshold: " + ", ".join(c.case for c in stats.failing()))
         raise typer.Exit(1)
+
+
+@app.command()
+def report(
+    run_id: Annotated[
+        str | None, typer.Option("--run", help="Run id (default: the latest stored run).")
+    ] = None,
+    out: Annotated[Path, typer.Option(help="Where to write the HTML.")] = Path("report.html"),
+    threshold: Annotated[
+        float, typer.Option(min=0.01, max=1.0, help="Pass rate each case needs; 1.0 is every run.")
+    ] = 1.0,
+) -> None:
+    """Write a static HTML report of a stored run, with the trend across stored runs."""
+    stores = open_stores(StorageConfig.load(Path.cwd()))
+    try:
+        html = ReportBuilder(stores.results, DEFAULT_WORKSPACE, threshold).build(run_id)
+    except LookupError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(2) from exc
+    finally:
+        stores.results.close()
+    out.write_text(html, encoding="utf-8")
+    typer.echo(f"wrote {out}")
 
 
 @app.command()

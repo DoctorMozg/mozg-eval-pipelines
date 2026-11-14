@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>mzeval run {{ run.id[:8] }}</title>
+<style>
+  :root { --bg: #fff; --fg: #1b1b1b; --muted: #5f6368; --line: #e0e0e0; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #121212; --fg: #e8e8e8; --muted: #a0a0a0; --line: #333; }
+  }
+  body { background: var(--bg); color: var(--fg); font: 15px/1.5 system-ui, sans-serif;
+         margin: 0 auto; max-width: 1100px; padding: 24px 16px; }
+  h1 { font-size: 1.4rem; margin: 0 0 4px; }
+  h2 { font-size: 1.1rem; margin: 32px 0 8px; }
+  .meta { color: var(--muted); }
+  .chart { background: #fff; border: 1px solid var(--line); border-radius: 6px; padding: 8px; }
+  table { border-collapse: collapse; width: 100%; }
+  th, td { border-bottom: 1px solid var(--line); padding: 6px 8px; text-align: left;
+           vertical-align: top; }
+  td.detail { font-family: ui-monospace, monospace; font-size: 0.85rem; white-space: pre-wrap; }
+</style>
+</head>
+<body>
+<h1>Run {{ run.id }}</h1>
+<p class="meta">
+  {{ run.started_at.strftime("%Y-%m-%d %H:%M UTC") }} · {{ run.trigger }}
+  {% if run.git_sha %}· {{ run.git_sha[:12] }}{% endif %}
+</p>
+<p>
+  <strong>{{ "%.0f" | format(rate[0] * 100) }}%</strong> of {{ stats.cases | length }} cases at or
+  above {{ "%.0f" | format(stats.threshold * 100) }}% pass rate
+  (95% CI {{ "%.0f" | format(rate[1] * 100) }}–{{ "%.0f" | format(rate[2] * 100) }}%).
+  {% set flaky = stats.cases | selectattr("flaky") | list %}
+  {% if flaky %}Flaky: {{ flaky | map(attribute="case") | join(", ") }}.{% endif %}
+</p>
+
+<h2>Trials</h2>
+<div class="chart" id="heatmap"></div>
+
+<h2>Pass rate per case, with Wilson 95% intervals</h2>
+<div class="chart" id="wilson"></div>
+
+<h2>Trend across runs</h2>
+<div class="chart" id="trend"></div>
+
+<h2>Failed grades</h2>
+{% if failures %}
+<table>
+  <tr><th>case</th><th>repeat</th><th>grader</th><th>detail</th></tr>
+  {% for trial, grade in failures %}
+  <tr><td>{{ trial.case }}</td><td>{{ trial.repeat }}</td><td>{{ grade.name }}</td>
+      <td class="detail">{{ grade.detail }}</td></tr>
+  {% endfor %}
+</table>
+{% else %}
+<p class="meta">None.</p>
+{% endif %}
+
+{% for script in scripts %}<script>{{ script }}</script>
+{% endfor %}
+<script>
+  const charts = {{ charts | tojson }};
+  for (const [id, spec] of Object.entries(charts)) {
+    const fit = { width: "container", autosize: { type: "fit", contains: "padding" } };
+    vegaEmbed("#" + id, { ...spec, ...fit }, { actions: false });
+  }
+</script>
+</body>
+</html>

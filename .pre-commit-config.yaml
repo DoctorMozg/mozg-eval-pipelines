@@ -1,3 +1,5 @@
+# Vendored builds stay byte-identical to upstream.
+exclude: ^src/mozg_eval/report/static/
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v6.0.0
