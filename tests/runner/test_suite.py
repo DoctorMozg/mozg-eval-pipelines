@@ -314,6 +314,67 @@ class TestRunCommand:
         assert not (tmp_path / "record.json").exists()
 
 
+@pytest.fixture
+def two_cases(suite: Path) -> Path:
+    """The suite plus a copy named remember-other and tagged nightly; returns the evals root."""
+    other = suite.parent / "remember-other"
+    other.mkdir()
+    (other / "fixture.sh").write_text((suite / "fixture.sh").read_text())
+    text = (suite / "case.mzeval.yaml").read_text()
+    text = text.replace("name: remember-decision\n", "name: remember-other\ntags: [nightly]\n")
+    (other / "case.mzeval.yaml").write_text(text)
+    return suite.parent
+
+
+class TestCaseSelection:
+    @pytest.mark.parametrize(
+        ("flags", "ran"),
+        [
+            (["--case", "remember-o*"], ["remember-other"]),
+            (["--tag", "nightly"], ["remember-other"]),
+            (["--case", "remember-*", "--tag", "nightly"], ["remember-other"]),
+            (
+                ["--case", "remember-decision", "--case", "remember-other"],
+                ["remember-decision", "remember-other"],
+            ),
+        ],
+    )
+    def test_only_matching_cases_run(
+        self, two_cases: Path, fake_claude: Path, flags: list[str], ran: list[str]
+    ) -> None:
+        argv = ["run", str(two_cases), "--runs", "1", "--executable", str(fake_claude), *flags]
+
+        result = CliRunner().invoke(app, argv)
+
+        assert result.exit_code == 0, result.output
+        assert (
+            sorted(
+                {line.split()[1] for line in result.output.splitlines() if line.startswith("PASS")}
+            )
+            == ran
+        )
+
+    def test_selection_that_matches_nothing_exits_2_before_any_agent(
+        self, two_cases: Path, fake_claude: Path, tmp_path: Path
+    ) -> None:
+        argv = [
+            "run",
+            str(two_cases),
+            "--executable",
+            str(fake_claude),
+            "--case",
+            "nope*",
+            "--tag",
+            "x",
+        ]
+
+        result = CliRunner().invoke(app, argv)
+
+        assert result.exit_code == 2
+        assert "no case matches --case nope* --tag x" in result.output
+        assert not (tmp_path / "record.json").exists()
+
+
 class TestPlanCommand:
     def test_estimate_comes_from_stored_runs_and_spends_nothing(
         self, suite: Path, fake_claude: Path, tmp_path: Path

@@ -32,7 +32,14 @@ from mozg_eval.report.html import ReportBuilder
 from mozg_eval.report.junit import JUnitReport
 from mozg_eval.runner.plan import CostHistory, Planner
 from mozg_eval.runner.rejudge import Rejudger
-from mozg_eval.runner.suite import FixtureError, SuiteRunner, TrialSummary
+from mozg_eval.runner.suite import (
+    CaseFilter,
+    FixtureError,
+    NoCaseSelected,
+    RunOptions,
+    SuiteRunner,
+    TrialSummary,
+)
 from mozg_eval.spec.loader import CASE_FILENAME, CaseLoader, CaseLoadError
 from mozg_eval.spec.models import Case
 from mozg_eval.storage.base import DEFAULT_WORKSPACE
@@ -148,6 +155,13 @@ def run(
     junit: Annotated[
         Path | None, typer.Option(help="Write a JUnit XML report here, one testcase per case.")
     ] = None,
+    case: Annotated[
+        list[str] | None,
+        typer.Option("--case", help="Run only cases whose name matches this glob; repeatable."),
+    ] = None,
+    tag: Annotated[
+        list[str] | None, typer.Option("--tag", help="Run only cases with this tag; repeatable.")
+    ] = None,
     push: Annotated[
         bool,
         typer.Option(
@@ -187,7 +201,8 @@ def run(
         lambda cases: TrialJudge.for_cases(cases, judge, _judge_cache()),
     )
     try:
-        result = asyncio.run(suite.run(files, ablation))
+        select = CaseFilter(tuple(case or ()), tuple(tag or ()))
+        result = asyncio.run(suite.run(files, RunOptions(ablation, select)))
     except JudgeSetupError as exc:
         typer.echo(f"judge: {exc}", err=True)
         raise typer.Exit(2) from exc
@@ -197,6 +212,9 @@ def run(
         raise typer.Exit(2) from exc
     except FixtureError as exc:
         typer.echo(f"fixture failed: {exc}", err=True)
+        raise typer.Exit(2) from exc
+    except NoCaseSelected as exc:
+        typer.echo(str(exc), err=True)
         raise typer.Exit(2) from exc
     except KeyboardInterrupt as exc:
         # Click would exit 1, which CI reads as a regression; 130 is the shell's SIGINT code.

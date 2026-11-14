@@ -7,6 +7,7 @@ import tempfile
 from collections.abc import AsyncIterator, Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from fnmatch import fnmatchcase
 from pathlib import Path
 
 from pydantic import JsonValue
@@ -38,6 +39,32 @@ type JudgeFactory = Callable[[Sequence[Case]], TrialJudge]
 
 class FixtureError(RuntimeError):
     pass
+
+
+class NoCaseSelected(ValueError):
+    pass
+
+
+@dataclass(frozen=True)
+class CaseFilter:
+    """Picks cases by name glob (--case) and tag (--tag); each kind that is given must match."""
+
+    names: tuple[str, ...] = ()
+    tags: tuple[str, ...] = ()
+
+    def matches(self, case: Case) -> bool:
+        if self.names and not any(fnmatchcase(case.name, name) for name in self.names):
+            return False
+        return not self.tags or not set(self.tags).isdisjoint(case.tags)
+
+    def __str__(self) -> str:
+        return " ".join([*(f"--case {n}" for n in self.names), *(f"--tag {t}" for t in self.tags)])
+
+
+@dataclass(frozen=True)
+class RunOptions:
+    ablation: bool = False
+    select: CaseFilter = CaseFilter()
 
 
 @dataclass(frozen=True)
@@ -111,9 +138,14 @@ class SuiteRunner:
             log.warning("%s: no bundle or no arm-both grader, so no without arm", case.name)
         return ["with"]
 
-    async def run(self, case_files: Sequence[Path], ablation: bool = False) -> SuiteResult:
+    async def run(
+        self, case_files: Sequence[Path], options: RunOptions = RunOptions()
+    ) -> SuiteResult:
         loader = CaseLoader()
-        cases = [(path.parent, loader.load(path)) for path in case_files]
+        loaded = [(path.parent, loader.load(path)) for path in case_files]
+        cases = [(case_dir, case) for case_dir, case in loaded if options.select.matches(case)]
+        if not cases:
+            raise NoCaseSelected(f"no case matches {options.select}")
         judge = self.make_judge([case for _, case in cases])
         run = RunRecord(id=new_id(), started_at=datetime.now(UTC), trigger="local")
         self.stores.results.add_run(self.ws, run)
@@ -125,7 +157,7 @@ class SuiteRunner:
                 result.skipped[case.name] = reason
                 continue
             execution = case.execution.model_copy(update=self.overrides)
-            for arm in self.arms(case, ablation):
+            for arm in self.arms(case, options.ablation):
                 for repeat in range(1, execution.runs + 1):
                     result.trials.append(await self._trial(run, judge, case_dir, case, arm, repeat))
         return result
