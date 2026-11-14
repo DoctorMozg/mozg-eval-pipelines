@@ -13,6 +13,7 @@ from mozg_eval.events.models import (
     EndStatus,
     Event,
     FileChange,
+    HookFired,
     Message,
     Payload,
     ToolCall,
@@ -127,6 +128,36 @@ class TestEventGraders:
         )
 
         assert verdicts(results) == {"g0": "pass", "g1": "fail"}
+
+    def test_hook_fired_without_an_event_matches_any_hook(self) -> None:
+        events = events_of([HookFired(event="UserPromptSubmit", output="pnpm exclusively")])
+
+        results = grade(
+            events,
+            {"type": "hook_fired", "match": "pnpm"},
+            {"type": "hook_fired", "event": "SessionStart", "match": "pnpm"},
+        )
+
+        assert verdicts(results) == {"g0": "pass", "g1": "fail"}
+
+    def test_replies_and_tool_results_match_one_item_at_a_time(self) -> None:
+        events = events_of(
+            [
+                Message(role="assistant", text="Panel ready for review"),
+                ToolResult(id="1", ok=True, output="token ttl: 15 minutes"),
+                Message(role="assistant", text="Not selected: lens-x"),
+            ]
+        )
+
+        results = grade(
+            events,
+            {"type": "regex", "target": "replies", "pattern": "^Panel ready[\\s\\S]*Not selected"},
+            {"type": "regex", "target": "replies", "pattern": "Not selected"},
+            {"type": "regex", "target": "tool_results", "pattern": "15 minutes"},
+            {"type": "regex", "target": "replies", "pattern": "15 minutes", "min": 0, "max": 0},
+        )
+
+        assert verdicts(results) == {"g0": "fail", "g1": "pass", "g2": "pass", "g3": "pass"}
 
     def test_tool_path_match_reads_the_file_path_argument(self) -> None:
         call = ToolCall(id="1", kind="write", name="Write", input={"file_path": "/ws/a.md"})

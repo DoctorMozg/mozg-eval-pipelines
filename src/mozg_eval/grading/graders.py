@@ -156,7 +156,7 @@ class TrialGrader:
             case HookFiredGrader():
                 return sum(
                     isinstance(p, HookFired)
-                    and p.event == grader.event
+                    and grader.event in (None, p.event)
                     and (grader.match is None or bool(re.search(grader.match, p.output)))
                     for p in payloads
                 )
@@ -167,8 +167,8 @@ class TrialGrader:
                     for p in payloads
                 )
             case RegexGrader():
-                text = self._text(grader, payloads)
-                return len(re.findall(grader.pattern, text, regex_flags(grader.flags)))
+                pattern = re.compile(grader.pattern, regex_flags(grader.flags))
+                return sum(len(pattern.findall(text)) for text in self._texts(grader, payloads))
             case RawRegexGrader():
                 return len(re.findall(grader.pattern, self.raw or "", regex_flags(grader.flags)))
         raise ValueError(f"no counter for grader {grader.name} ({type(grader).__name__})")
@@ -184,16 +184,23 @@ class TrialGrader:
         return any(re.search(grader.path_match, path) for path in _paths(call.input))
 
     @staticmethod
-    def _text(grader: RegexGrader, payloads: list[Payload]) -> str:
-        if grader.target == "final":
-            replies = [p.text for p in payloads if isinstance(p, Message) and p.role == "assistant"]
-            return replies[-1] if replies else ""
+    def _texts(grader: RegexGrader, payloads: list[Payload]) -> list[str]:
+        replies = [p.text for p in payloads if isinstance(p, Message) and p.role == "assistant"]
+        match grader.target:
+            case "final":
+                return replies[-1:]
+            case "replies":
+                return replies
+            case "tool_results":
+                return [p.output for p in payloads if isinstance(p, ToolResult)]
         # transcript: what was said and what the tools returned, in order
-        return "\n".join(
-            p.text if isinstance(p, Message) else p.output
-            for p in payloads
-            if isinstance(p, Message | ToolResult)
-        )
+        return [
+            "\n".join(
+                p.text if isinstance(p, Message) else p.output
+                for p in payloads
+                if isinstance(p, Message | ToolResult)
+            )
+        ]
 
     @staticmethod
     def _tool_order(grader: ToolOrderGrader, payloads: list[Payload]) -> tuple[Verdict, str]:

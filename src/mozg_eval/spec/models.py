@@ -114,7 +114,10 @@ class FileTarget(StrictModel):
     file: Name
 
 
-type RegexTarget = Literal["final", "transcript", "created_files"] | FileTarget
+# replies and tool_results are matched one item at a time, so a pattern can't span two of them.
+type RegexTarget = (
+    Literal["final", "transcript", "replies", "tool_results", "created_files"] | FileTarget
+)
 
 
 class RegexGrader(GraderBase):
@@ -145,7 +148,7 @@ class RawRegexGrader(GraderBase):
 
 class HookFiredGrader(GraderBase):
     type: Literal["hook_fired"]
-    event: Name
+    event: Name | None = Field(None, description="the hook event; none matches every event")
     match: str | None = Field(None, description="regex over the hook's input and output")
 
     @model_validator(mode="after")
@@ -165,10 +168,14 @@ class FileChangedGrader(GraderBase):
 
     type: Literal["file_changed"]
     path_match: str | None = Field(None, description="regex over the file's absolute path")
+    content_match: str | None = Field(
+        None, description="regex over the file's text after the run; deleted files never match"
+    )
 
     @model_validator(mode="after")
     def _regex(self) -> Self:
         _check_regex(self.path_match)
+        _check_regex(self.content_match)
         return self
 
 

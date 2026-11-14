@@ -11,6 +11,7 @@ from mozg_eval.events.models import ChangeKind, CheckResult, FileChange
 from mozg_eval.spec.models import (
     CommandGrader,
     Count,
+    FileChangedGrader,
     FileExistsGrader,
     FileTarget,
     Grader,
@@ -32,6 +33,8 @@ def in_range(count: int, bounds: Count) -> bool:
 def needs_workspace(grader: Grader) -> bool:
     if isinstance(grader, RegexGrader):
         return grader.target == "created_files" or isinstance(grader.target, FileTarget)
+    if isinstance(grader, FileChangedGrader):
+        return grader.content_match is not None
     return isinstance(grader, CommandGrader | FileExistsGrader)
 
 
@@ -78,6 +81,8 @@ class WorkspaceChecks:
             return CheckResult(name=grader.name, passed=passed, detail=detail)
         if isinstance(grader, RegexGrader):
             return self._regex(grader)
+        if isinstance(grader, FileChangedGrader):
+            return self._file_changed(grader)
         raise ValueError(f"grader {grader.name} ({grader.type}) doesn't need the workspace")
 
     def _regex(self, grader: RegexGrader) -> CheckResult:
@@ -94,6 +99,19 @@ class WorkspaceChecks:
         return CheckResult(
             name=grader.name, passed=in_range(count, grader), detail=f"{count} matches"
         )
+
+    def _file_changed(self, grader: FileChangedGrader) -> CheckResult:
+        assert grader.content_match is not None
+        content = re.compile(grader.content_match)
+        matched = [
+            change.path
+            for change in self.changes()
+            if change.change != "deleted"
+            and (grader.path_match is None or re.search(grader.path_match, change.path))
+            and content.search(Path(change.path).read_text(errors="replace"))
+        ]
+        detail = ", ".join(matched) or "no changed file matches"
+        return CheckResult(name=grader.name, passed=in_range(len(matched), grader), detail=detail)
 
     async def _command(self, grader: CommandGrader) -> CheckResult:
         process = await asyncio.create_subprocess_exec(

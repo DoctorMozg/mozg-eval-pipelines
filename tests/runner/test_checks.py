@@ -93,6 +93,26 @@ class TestRegex:
         assert check(checks, type="regex", pattern="TODO", target="created_files", min=2).passed
 
 
+class TestFileChangedContent:
+    def test_counts_created_and_edited_files_whose_text_matches(
+        self, checks: WorkspaceChecks
+    ) -> None:
+        result = check(checks, type="file_changed", content_match="after|TODO", min=2, max=2)
+
+        assert result.passed, result.detail
+        assert "plan.md" in result.detail
+        assert "edited.txt" in result.detail
+
+    def test_path_match_narrows_and_deleted_files_never_match(
+        self, checks: WorkspaceChecks
+    ) -> None:
+        planned = check(checks, type="file_changed", path_match=r"docs/", content_match="TODO")
+        deleted = check(checks, type="file_changed", content_match="bye", min=0, max=0)
+
+        assert planned.passed
+        assert deleted.passed
+
+
 class TestCommand:
     def test_passes_on_exit_zero_in_the_workspace(self, checks: WorkspaceChecks) -> None:
         result = check(checks, type="command", run='test -f out.json && echo "home=$HOME"')
@@ -114,6 +134,7 @@ class TestCommand:
         ({"type": "regex", "pattern": "x", "target": "created_files"}, True),
         ({"type": "regex", "pattern": "x", "target": "final"}, False),
         ({"type": "file_changed"}, False),
+        ({"type": "file_changed", "content_match": "x"}, True),
     ],
 )
 def test_only_workspace_graders_run_live(fields: dict[str, object], live: bool) -> None:
