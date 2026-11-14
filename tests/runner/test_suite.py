@@ -14,6 +14,7 @@ from mozg_eval.judge.cache import JudgeCache
 from mozg_eval.judge.grading import TrialJudge
 from mozg_eval.judge.verdict import CriterionJudge
 from mozg_eval.runner.rejudge import Rejudger
+from mozg_eval.runner.suite import SuiteRunner
 from mozg_eval.spec.loader import CaseLoader
 from mozg_eval.storage.base import ArtifactRef
 from mozg_eval.storage.config import StorageConfig, open_stores
@@ -114,6 +115,40 @@ class TestRunCommand:
         assert result.exit_code == 2
         assert "judge: Unknown model: nonsense" in result.output
         assert not (tmp_path / "record.json").exists()
+
+    def test_missing_agent_executable_stops_the_run_before_anything_is_stored(
+        self, suite: Path, tmp_path: Path
+    ) -> None:
+        missing = tmp_path / "no-such-claude"
+
+        result = CliRunner().invoke(app, ["run", str(suite), "--executable", str(missing)])
+
+        assert result.exit_code == 2
+        assert result.output == f"agent not found: {missing}; install it or pass --executable\n"
+        assert not (tmp_path / ".mzeval").exists()
+
+    def test_relative_executable_still_runs_from_the_trial_workspace(
+        self, suite: Path, fake_claude: Path
+    ) -> None:
+        relative = f"./{fake_claude.name}"
+
+        result = CliRunner().invoke(app, ["run", str(suite), "--executable", relative])
+
+        assert result.exit_code == 0, result.output
+        assert result.output.count("PASS remember-decision #") == 2
+
+    def test_interrupt_exits_130_not_the_below_threshold_code(
+        self, suite: Path, fake_claude: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        async def interrupted(*_: object) -> None:
+            raise KeyboardInterrupt
+
+        monkeypatch.setattr(SuiteRunner, "run", interrupted)
+
+        result = CliRunner().invoke(app, ["run", str(suite), "--executable", str(fake_claude)])
+
+        assert result.exit_code == 130
+        assert "interrupted; trials that finished are stored" in result.output
 
     def test_workspace_checks_are_stored_after_end(
         self, suite: Path, fake_claude: Path, tmp_path: Path

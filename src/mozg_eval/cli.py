@@ -1,6 +1,7 @@
 import asyncio
 import json
 import os
+import shutil
 from enum import StrEnum
 from pathlib import Path
 from typing import Annotated
@@ -156,7 +157,8 @@ def run(
 ) -> None:
     """Run and grade cases on one agent.
 
-    Exit 0 when every case meets the threshold, 1 when one doesn't, 2 when a trial errored.
+    Exit 0 when every case meets the threshold, 1 when one doesn't, 2 when a trial errored,
+    130 when interrupted.
     With --ablation only the with-bundle arm counts toward the threshold. A failed --push
     never changes the exit code; `mzeval push RUN` retries it.
     """
@@ -165,11 +167,17 @@ def run(
     if not files:
         typer.echo(f"no {CASE_FILENAME} found under: {', '.join(map(str, paths))}", err=True)
         raise typer.Exit(2)
+    wanted = executable or driver.value
+    # Absolute, because each trial starts the agent from its own temp workspace.
+    found = shutil.which(wanted)
+    if found is None:
+        typer.echo(f"agent not found: {wanted}; install it or pass --executable", err=True)
+        raise typer.Exit(2)
+    command = str(Path(found).absolute())
     overrides: dict[str, JsonValue] = {
         key: value for key, value in {"runs": runs, "model": model}.items() if value is not None
     }
     stores = open_stores(StorageConfig.load(Path.cwd()))
-    command = executable or driver.value
     suite = SuiteRunner(
         stores,
         DriverSupport(driver.value, DRIVERS[driver].capabilities),
@@ -190,6 +198,10 @@ def run(
     except FixtureError as exc:
         typer.echo(f"fixture failed: {exc}", err=True)
         raise typer.Exit(2) from exc
+    except KeyboardInterrupt as exc:
+        # Click would exit 1, which CI reads as a regression; 130 is the shell's SIGINT code.
+        typer.echo("interrupted; trials that finished are stored", err=True)
+        raise typer.Exit(130) from exc
     finally:
         stores.results.close()
     record, trials = result.run, result.trials
