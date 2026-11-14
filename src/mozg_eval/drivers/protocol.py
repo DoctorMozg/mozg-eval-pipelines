@@ -47,6 +47,10 @@ class DriverManifest(StrictModel):
         return cls.model_validate(yaml.safe_load(path.read_text(encoding="utf-8")))
 
 
+# Agents without a turn cap of their own are stopped by the driver and still end ok.
+MAX_TURNS_REASON = "max_turns reached"
+
+
 class Limits(StrictModel):
     max_turns: int
     timeout_s: int

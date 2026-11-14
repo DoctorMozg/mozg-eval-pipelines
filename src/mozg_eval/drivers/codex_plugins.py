@@ -7,7 +7,14 @@ import sys
 from collections.abc import Sequence
 from pathlib import Path
 
-from pydantic import BaseModel, Field, JsonValue, ValidationError
+from pydantic import JsonValue
+
+from mozg_eval.drivers.claude_plugins import (
+    IGNORED,
+    ClaudeManifest,
+    PluginRenderError,
+    resolve_plugin_root,
+)
 
 log = logging.getLogger(__name__)
 
@@ -16,17 +23,6 @@ CAPTURE = Path(__file__).with_name("codex_hook_capture.py")
 HOOK_COMMANDS = ".mzeval-hook-commands.json"
 # Claude's file tools are one tool on Codex; other matchers name tools both agents share.
 _MATCHER_RENAMES = {"Write": "apply_patch", "Edit": "apply_patch", "MultiEdit": "apply_patch"}
-
-
-class PluginRenderError(ValueError):
-    pass
-
-
-class _ClaudeManifest(BaseModel):
-    # The name becomes a directory under the marketplace, so no separators or leading dots.
-    name: str = Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_.-]*$")
-    version: str = "0.0.0"
-    description: str | None = None
 
 
 def _rename_matcher(matcher: str) -> str:
@@ -44,23 +40,17 @@ class CodexMarketplace:
 
     def render(self, source: Path) -> str:
         """Copy one Claude plugin in as a Codex plugin and return its name."""
-        manifest_path = source / ".claude-plugin" / "plugin.json"
-        if not manifest_path.is_file():
-            raise PluginRenderError(f"{source}: no .claude-plugin/plugin.json")
-        try:
-            manifest = _ClaudeManifest.model_validate_json(manifest_path.read_bytes())
-        except ValidationError as exc:
-            raise PluginRenderError(f"{manifest_path}: {exc.errors()[0]['msg']}") from exc
+        manifest = ClaudeManifest.of(source)
         name, version = manifest.name, manifest.version
         if name in self.plugins:
             raise PluginRenderError(f"{source}: a plugin named {name} is already in this trial")
         target = self.root / "plugins" / name
-        shutil.copytree(source, target, ignore=shutil.ignore_patterns(".git", "__pycache__"))
+        shutil.copytree(source, target, ignore=IGNORED)
         (target / ".codex-plugin").mkdir()
         codex_manifest = manifest.model_dump_json(exclude_none=True)
         (target / ".codex-plugin" / "plugin.json").write_text(codex_manifest)
         installed = self.codex_home / "plugins" / "cache" / MARKETPLACE / name / version
-        self._resolve_skill_paths(target, installed)
+        resolve_plugin_root(target, installed)
         self._instrument_hooks(target, name)
         self.plugins.append(name)
         log.debug("rendered plugin %s %s from %s", name, version, source)
@@ -80,16 +70,6 @@ class CodexMarketplace:
         commands = [[codex, "plugin", "marketplace", "add", str(self.root)]]
         commands += [[codex, "plugin", "add", f"{name}@{MARKETPLACE}"] for name in self.plugins]
         return commands
-
-    @staticmethod
-    def _resolve_skill_paths(plugin: Path, installed: Path) -> None:
-        # Claude substitutes the plugin root inside skill text; Codex shows the model the raw text.
-        for doc in (plugin / "skills").rglob("*.md") if (plugin / "skills").is_dir() else []:
-            text = doc.read_text(encoding="utf-8")
-            if "${CLAUDE_PLUGIN_ROOT}" in text:
-                doc.write_text(
-                    text.replace("${CLAUDE_PLUGIN_ROOT}", str(installed)), encoding="utf-8"
-                )
 
     @staticmethod
     def _instrument_hooks(plugin: Path, name: str) -> None:

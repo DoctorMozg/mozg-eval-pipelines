@@ -12,9 +12,10 @@ from typing import Literal
 from pydantic import BaseModel, JsonValue, ValidationError
 
 from mozg_eval.drivers import process
-from mozg_eval.drivers.codex_plugins import MARKETPLACE, CodexMarketplace, PluginRenderError
+from mozg_eval.drivers.claude_plugins import PluginRenderError
+from mozg_eval.drivers.codex_plugins import MARKETPLACE, CodexMarketplace
 from mozg_eval.drivers.process import ChildProcess
-from mozg_eval.drivers.protocol import Capabilities, TrialRequest
+from mozg_eval.drivers.protocol import MAX_TURNS_REASON, Capabilities, TrialRequest
 from mozg_eval.events.models import (
     End,
     Error,
@@ -39,7 +40,6 @@ _SKILL_READ = re.compile(
 # Codex repeats this notice on every run that passes the flag; it is not a failure.
 _HOOK_TRUST_NOTICE = "--dangerously-bypass-hook-trust"
 _KEEP_ENV = {"CODEX_API_KEY"}
-MAX_TURNS_REASON = "max_turns reached"
 _MAX_TURNS_END = End(status="ok", reason=MAX_TURNS_REASON)
 _CONFIG = """\
 project_doc_fallback_filenames = ["CLAUDE.md"]

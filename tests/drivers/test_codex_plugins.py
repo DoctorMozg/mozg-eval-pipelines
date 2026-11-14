@@ -6,7 +6,8 @@ from pathlib import Path
 
 import pytest
 
-from mozg_eval.drivers.codex_plugins import CAPTURE, CodexMarketplace, PluginRenderError
+from mozg_eval.drivers.claude_plugins import PluginRenderError
+from mozg_eval.drivers.codex_plugins import CAPTURE, CodexMarketplace
 
 
 @pytest.fixture
