@@ -15,6 +15,8 @@ from mozg_eval.spec.models import StrictModel
 
 DEFAULT_WORKSPACE = "local"
 
+type TrialArm = Literal["with", "without"]
+
 # Ids become path segments on disk, so every backend accepts the same safe alphabet.
 _ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$")
 
@@ -67,7 +69,7 @@ class TrialRecord(StrictModel):
     id: str
     run: str
     case: str
-    arm: Literal["with", "without"]
+    arm: TrialArm
     repeat: PositiveInt
     driver: str
     status: EndStatus

@@ -400,6 +400,12 @@ its YAML datasets is cheap if anyone asks.
 - **Threshold:** a gate is "CI lower bound ≥ X", replacing "every run passes". Exit codes stay the
   same as `claude plugin eval` (0 / 1 / 2 / 130), so it slots into Makefiles.
 
+As built (milestone 13): a trial's score is the weighted share of its applicable grades that
+passed, 0 for an errored trial; in an ablation run only `arm: both` graders count, as in 1.1's
+`meanDelta`. The bootstrap resamples cases, then each case's runs in both arms, so a one-case
+comparison still gets an interval. Exact McNemar treats a trial as passed when its score is 1.
+`run --ablation` skips the without arm for a case with no bundle or no `arm: both` grader.
+
 ### 4.7 Storage layer: pluggable backends, tenant-ready
 
 Three stores sit between the core and any storage. Nothing above them writes SQL, builds paths or
@@ -510,6 +516,7 @@ drill-down, and Vega-Lite does brushing. Revisit only if the UI needs real clien
 | ---------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
 | `mzeval run <suite> [--driver ...] [--push] [--run-id ID]` | run locally; exit 0 / 1 / 2 / 130; JUnit and HTML in the run dir; `--run-id` attaches to a run the server queued |
 | `mzeval plan <suite>`                                      | validate cases and estimate cost from past runs, no tokens spent                                                 |
+| `mzeval compare <run> [<baseline-run>]`                    | paired per-case score delta with its CI: a run's with/without arms, or a run against a baseline run              |
 | `mzeval push <run-dir>`                                    | upload a finished run (retry after a failed `--push`)                                                            |
 | `mzeval ingest <file> --format ...`                        | import external traces as a source run                                                                           |
 | `mzeval rejudge / renormalize <run>`                       | regrade or re-parse stored runs at no agent cost                                                                 |

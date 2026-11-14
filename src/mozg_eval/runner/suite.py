@@ -22,7 +22,7 @@ from mozg_eval.runner.settings import resolve_settings
 from mozg_eval.runner.trial import TrialRunner, TurnGuard
 from mozg_eval.spec.loader import CaseLoader
 from mozg_eval.spec.models import Case
-from mozg_eval.storage.base import ArtifactRef, RunRecord, TrialRecord, new_id
+from mozg_eval.storage.base import ArtifactRef, RunRecord, TrialArm, TrialRecord, new_id
 from mozg_eval.storage.config import Stores
 
 log = logging.getLogger(__name__)
@@ -108,7 +108,19 @@ class SuiteRunner:
             return f"nothing to grade on {self.driver_name}: {'; '.join(self.support.gaps(case))}"
         return None
 
-    async def run(self, case_files: Sequence[Path]) -> tuple[RunRecord, list[TrialSummary]]:
+    @staticmethod
+    def arms(case: Case, ablation: bool) -> list[TrialArm]:
+        """The without arm runs only when the case loads a bundle and grades it in both arms."""
+        both = case.expect.skill is not None and case.expect.arm == "both"
+        if ablation and case.bundle and (both or any(g.arm == "both" for g in case.graders)):
+            return ["with", "without"]
+        if ablation:
+            log.warning("%s: no bundle or no arm-both grader, so no without arm", case.name)
+        return ["with"]
+
+    async def run(
+        self, case_files: Sequence[Path], ablation: bool = False
+    ) -> tuple[RunRecord, list[TrialSummary]]:
         loader = CaseLoader()
         cases = [(path.parent, loader.load(path)) for path in case_files]
         judge = self.make_judge([case for _, case in cases])
@@ -121,12 +133,19 @@ class SuiteRunner:
                 log.warning("skipping %s: %s", case.name, reason)
                 continue
             execution = case.execution.model_copy(update=self.overrides)
-            for repeat in range(1, execution.runs + 1):
-                summaries.append(await self._trial(run, judge, case_dir, case, repeat))
+            for arm in self.arms(case, ablation):
+                for repeat in range(1, execution.runs + 1):
+                    summaries.append(await self._trial(run, judge, case_dir, case, arm, repeat))
         return run, summaries
 
     async def _trial(
-        self, run: RunRecord, judge: TrialJudge, case_dir: Path, case: Case, repeat: int
+        self,
+        run: RunRecord,
+        judge: TrialJudge,
+        case_dir: Path,
+        case: Case,
+        arm: TrialArm,
+        repeat: int,
     ) -> TrialSummary:
         execution = case.execution.model_copy(update=self.overrides)
         trial_id = new_id()
@@ -145,7 +164,9 @@ class SuiteRunner:
                 prompt=execution.prompt,
                 workspace=str(workspace),
                 env=execution.env,
-                plugins=[str((case_dir / plugin).resolve()) for plugin in case.bundle],
+                plugins=[]
+                if arm == "without"
+                else [str((case_dir / plugin).resolve()) for plugin in case.bundle],
                 tools=execution.tools,
                 model=execution.model,
                 append_system_prompt=execution.append_system_prompt,
@@ -177,7 +198,7 @@ class SuiteRunner:
             id=trial_id,
             run=run.id,
             case=case.name,
-            arm="with",
+            arm=arm,
             repeat=repeat,
             driver=self.driver_name,
             status=status,

@@ -243,6 +243,75 @@ class TestRunCommand:
         assert not (tmp_path / "record.json").exists()
 
 
+class TestAblation:
+    @pytest.fixture
+    def plugin_case(self, suite: Path, tmp_path: Path) -> Path:
+        """Adds a grader that passes only when the agent was started with the bundle."""
+        case = suite / "case.mzeval.yaml"
+        record = tmp_path / "record.json"
+        case.write_text(
+            case.read_text()
+            + f"graders:\n  - {{name: loaded, type: command, run: grep -q plugin-dir {record}}}\n"
+        )
+        return suite
+
+    def stored_run(self, tmp_path: Path) -> str:
+        stores = open_stores(StorageConfig.load(tmp_path, env={}))
+        *_, run = stores.results.list_runs("local")
+        stores.results.close()
+        return run.id
+
+    def test_without_arm_drops_the_bundle_and_is_compared(
+        self, plugin_case: Path, fake_claude: Path, tmp_path: Path
+    ) -> None:
+        argv = ["run", str(plugin_case), "--ablation", "--executable", str(fake_claude)]
+
+        result = CliRunner().invoke(app, argv)
+
+        assert result.exit_code == 0, result.output
+        assert result.output.count("[without]") == 2
+        assert "remember-decision: with 1.00, without 0.00, delta +1.00" in result.output
+        assert "delta score +1.00 (95% CI +1.00 to +1.00) over 1 cases" in result.output
+        assert "1 cases, 100% at or above" in result.output
+
+    def test_compare_reads_the_arms_back_from_the_store(
+        self, plugin_case: Path, fake_claude: Path, tmp_path: Path
+    ) -> None:
+        argv = ["run", str(plugin_case), "--ablation", "--runs", "1"]
+        CliRunner().invoke(app, [*argv, "--executable", str(fake_claude)])
+
+        result = CliRunner().invoke(app, ["compare", self.stored_run(tmp_path)])
+
+        assert result.exit_code == 0, result.output
+        assert "over 1 cases, with vs without; exact McNemar p=1" in result.output
+
+    def test_compare_against_a_baseline_run(
+        self, plugin_case: Path, fake_claude: Path, tmp_path: Path
+    ) -> None:
+        argv = ["run", str(plugin_case), "--runs", "1", "--executable", str(fake_claude)]
+        CliRunner().invoke(app, argv)
+        baseline = self.stored_run(tmp_path)
+        CliRunner().invoke(app, argv)
+
+        result = CliRunner().invoke(app, ["compare", self.stored_run(tmp_path), baseline])
+        missing = CliRunner().invoke(app, ["compare", "nope"])
+
+        assert "delta score +0.00 (95% CI +0.00 to +0.00) over 1 cases" in result.output
+        assert missing.exit_code == 2
+        assert "no stored run 'nope'" in missing.output
+
+    def test_case_graded_only_with_the_bundle_gets_no_without_arm(
+        self, suite: Path, fake_claude: Path
+    ) -> None:
+        argv = ["run", str(suite), "--ablation", "--executable", str(fake_claude)]
+
+        result = CliRunner().invoke(app, argv)
+
+        assert result.exit_code == 0, result.output
+        assert "[without]" not in result.output
+        assert "no case was graded in both arms" in result.output
+
+
 class TestRejudge:
     @pytest.fixture
     def stored_run(self, suite: Path, fake_claude: Path, tmp_path: Path) -> str:

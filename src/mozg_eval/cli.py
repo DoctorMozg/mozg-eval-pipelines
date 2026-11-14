@@ -12,6 +12,7 @@ from mozg_eval.drivers.claude import ClaudeDriver
 from mozg_eval.drivers.codex import CodexDriver
 from mozg_eval.drivers.opencode import OpenCodeDriver
 from mozg_eval.drivers.pi import PiDriver
+from mozg_eval.grading.compare import Comparison, arm_scores
 from mozg_eval.grading.stats import SuiteStats
 from mozg_eval.grading.support import DriverSupport
 from mozg_eval.importers.claude_plugin_eval import (
@@ -132,10 +133,15 @@ def run(
         str | None, typer.Option(help="The agent's executable; defaults to the driver name.")
     ] = None,
     judge: JudgeOption = None,
+    ablation: Annotated[
+        bool,
+        typer.Option(help="Also run each case without its bundle and compare the two arms."),
+    ] = False,
 ) -> None:
     """Run and grade cases on one agent.
 
     Exit 0 when every case meets the threshold, 1 when one doesn't, 2 when a trial errored.
+    With --ablation only the with-bundle arm counts toward the threshold.
     """
     files = CaseLoader.discover(paths)
     if not files:
@@ -155,7 +161,7 @@ def run(
         lambda cases: TrialJudge.for_cases(cases, judge, _judge_cache()),
     )
     try:
-        record, trials = asyncio.run(suite.run(files))
+        record, trials = asyncio.run(suite.run(files, ablation))
     except JudgeSetupError as exc:
         typer.echo(f"judge: {exc}", err=True)
         raise typer.Exit(2) from exc
@@ -172,14 +178,23 @@ def run(
         cost = "n/a" if trial.record.cost_usd is None else f"${trial.record.cost_usd:.4f}"
         skills = ", ".join(trial.skills) or "none"
         verdict = "PASS" if trial.record.passed else "FAIL"
+        arm = f" [{trial.record.arm}]" if ablation else ""
         typer.echo(
-            f"{verdict} {trial.case} #{trial.record.repeat}: {trial.record.status}, "
+            f"{verdict} {trial.case} #{trial.record.repeat}{arm}: {trial.record.status}, "
             f"skills: {skills}, {cost}"
         )
         for grade in trial.grades:
             if grade.verdict == "fail":
                 typer.echo(f"    {grade.name}: {grade.detail}")
-    stats = SuiteStats.of([t.record for t in trials], threshold)
+    if ablation:
+        grades = {t.record.id: t.grades for t in trials}
+        by_arm = {
+            arm: arm_scores([t.record for t in trials if t.record.arm == arm], grades, True)
+            for arm in ("with", "without")
+        }
+        for line in Comparison.of(by_arm["with"], by_arm["without"]).summary("with", "without"):
+            typer.echo(line)
+    stats = SuiteStats.of([t.record for t in trials if t.record.arm == "with"], threshold)
     rate, low, high = stats.pass_rate()
     typer.echo(
         f"run {record.id}: {len(trials)} trials, {len(stats.cases)} cases, "
@@ -233,6 +248,42 @@ def rejudge(
             if grade.name in judged:
                 typer.echo(f"    {grade.name}: {grade.verdict}, {grade.detail}")
     typer.echo(f"run {run_id}: rejudged {len(trials)} trials")
+
+
+@app.command()
+def compare(
+    run_id: Annotated[str, typer.Argument(help="The stored run to compare.")],
+    baseline: Annotated[
+        str | None,
+        typer.Argument(help="A second stored run to compare against; default: the run's own arms."),
+    ] = None,
+) -> None:
+    """Compare scores per case: a run's with/without arms, or a run against a baseline run."""
+    stores = open_stores(StorageConfig.load(Path.cwd()))
+    try:
+        loaded = {}
+        for rid in filter(None, (run_id, baseline)):
+            if stores.results.get_run(DEFAULT_WORKSPACE, rid) is None:
+                typer.echo(f"no stored run {rid!r}", err=True)
+                raise typer.Exit(2)
+            loaded[rid] = (
+                stores.results.list_trials(DEFAULT_WORKSPACE, rid),
+                stores.results.list_grades(DEFAULT_WORKSPACE, rid),
+            )
+    finally:
+        stores.results.close()
+    trials, grades = loaded[run_id]
+    if baseline is None:
+        with_arm = arm_scores([t for t in trials if t.arm == "with"], grades, True)
+        without_arm = arm_scores([t for t in trials if t.arm == "without"], grades, True)
+        lines = Comparison.of(with_arm, without_arm).summary("with", "without")
+    else:
+        base_trials, base_grades = loaded[baseline]
+        current = arm_scores([t for t in trials if t.arm == "with"], grades, False)
+        previous = arm_scores([t for t in base_trials if t.arm == "with"], base_grades, False)
+        lines = Comparison.of(current, previous).summary(run_id[-8:], baseline[-8:])
+    for line in lines:
+        typer.echo(line)
 
 
 @app.command()
