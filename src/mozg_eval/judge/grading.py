@@ -65,10 +65,12 @@ class TrialJudge:
     def for_cases(
         cls, cases: Iterable[Case], default: Model | str | None, cache: JudgeCache
     ) -> Self:
-        """Builds every judge up front, so a missing API key stops the run before any agent."""
-        models = {
-            g.model for c in cases for g in c.graders if isinstance(g, JudgeGrader) and g.model
-        }
+        """Builds every judge the cases use up front, so a missing API key stops the run early."""
+        graders = [g for c in cases for g in c.graders if isinstance(g, JudgeGrader)]
+        models = {g.model for g in graders if g.model}
+        # An unused default is never built, so its key isn't needed for a suite with no judging.
+        if not any(not g.model for g in graders):
+            default = None
         try:
             named = {model: CriterionJudge(model, cache) for model in sorted(models)}
             return cls(None if default is None else CriterionJudge(default, cache), named)

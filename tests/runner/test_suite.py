@@ -110,6 +110,11 @@ class TestRunCommand:
     def test_unusable_judge_stops_the_run_before_any_agent(
         self, suite: Path, fake_claude: Path, tmp_path: Path
     ) -> None:
+        case = suite / "case.mzeval.yaml"
+        case.write_text(
+            case.read_text() + "graders:\n  - {name: ok, type: judge, checklist: [fine]}\n"
+        )
+
         result = CliRunner().invoke(
             app, ["run", str(suite), "--judge", "nonsense", "--executable", str(fake_claude)]
         )
@@ -117,6 +122,16 @@ class TestRunCommand:
         assert result.exit_code == 2
         assert "judge: Unknown model: nonsense" in result.output
         assert not (tmp_path / "record.json").exists()
+
+    def test_judge_no_grader_needs_is_not_built_so_its_key_is_not_required(
+        self, suite: Path, fake_claude: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+        argv = ["run", str(suite), "--executable", str(fake_claude)]
+
+        result = CliRunner().invoke(app, [*argv, "--judge", "anthropic:claude-haiku-4-5"])
+
+        assert result.exit_code == 0, result.output
 
     def test_missing_agent_executable_stops_the_run_before_anything_is_stored(
         self, suite: Path, tmp_path: Path
