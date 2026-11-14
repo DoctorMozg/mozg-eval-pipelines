@@ -12,7 +12,8 @@ from pathlib import Path
 from pydantic import JsonValue
 
 from mozg_eval.drivers.protocol import Driver, Limits, TrialRequest
-from mozg_eval.events.models import End, EndStatus, Event, SkillActivated, Usage
+from mozg_eval.events.models import End, EndStatus, Event, Payload, SkillActivated, Usage
+from mozg_eval.runner.checks import WorkspaceChecks, needs_workspace, snapshot
 from mozg_eval.runner.settings import resolve_settings
 from mozg_eval.runner.trial import TrialRunner, TurnGuard
 from mozg_eval.spec.loader import CaseLoader
@@ -55,8 +56,7 @@ async def _exec(*argv: str, cwd: Path, env: Mapping[str, str] | None = None) -> 
 
 
 def _outcome(events: list[Event]) -> tuple[EndStatus, float | None]:
-    end = events[-1].payload
-    assert isinstance(end, End)
+    end = next(e.payload for e in reversed(events) if isinstance(e.payload, End))
     costs = [
         e.payload.cost_usd
         for e in events
@@ -116,9 +116,10 @@ class SuiteRunner:
             workspace.mkdir()
             home.mkdir()
             await _exec("git", "init", "-q", ".", cwd=workspace)
+            check_env = os.environ | {"HOME": str(home)}
             if case.fixture:
-                fixture_env = os.environ | {"HOME": str(home)}
-                await _exec("bash", str(case_dir / case.fixture), cwd=workspace, env=fixture_env)
+                await _exec("bash", str(case_dir / case.fixture), cwd=workspace, env=check_env)
+            before = snapshot(workspace)
             request = TrialRequest(
                 trial=trial_id,
                 prompt=execution.prompt,
@@ -138,6 +139,11 @@ class SuiteRunner:
                 [TurnGuard(execution.max_turns)],
             )
             events = await runner.run(request, resolve_settings(case.execution, self.overrides))
+            checks = WorkspaceChecks(workspace, before, check_env)
+            post_run: list[Payload] = [*checks.changes()]
+            post_run += [await checks.check(g) for g in case.graders if needs_workspace(g)]
+            for payload in post_run:
+                await runner.append(trial_id, payload)
             for name in ("raw.jsonl", "stderr.log"):
                 if (raw_dir / name).exists():
                     ref = ArtifactRef(run=run.id, trial=trial_id, name=name)

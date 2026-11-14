@@ -6,6 +6,7 @@ import pytest
 from typer.testing import CliRunner
 
 from mozg_eval.cli import app
+from mozg_eval.events.models import CheckResult, End, Event
 from mozg_eval.storage.base import ArtifactRef
 from mozg_eval.storage.config import StorageConfig, open_stores
 
@@ -89,3 +90,24 @@ class TestRunCommand:
 
         assert result.exit_code == 0
         assert "0 trials" in result.output
+
+    def test_workspace_checks_are_stored_after_end(
+        self, suite: Path, fake_claude: Path, tmp_path: Path
+    ) -> None:
+        case = suite / "case.mzeval.yaml"
+        case.write_text(
+            case.read_text()
+            + "graders:\n  - {name: seeded, type: command, run: test -f seed.txt}\n"
+        )
+        CliRunner().invoke(app, ["run", str(suite), "--runs", "1", "--claude", str(fake_claude)])
+        stores = open_stores(StorageConfig.load(tmp_path, env={}))
+        (run,) = stores.results.list_runs("local")
+        (trial,) = stores.results.list_trials("local", run.id)
+        stores.results.close()
+
+        async def read() -> list[Event]:
+            return [e async for e in stores.events.read("local", run.id, trial.id)]
+
+        *_, end, check = asyncio.run(read())
+        assert isinstance(end.payload, End)
+        assert check.payload == CheckResult(name="seeded", passed=True, detail="")

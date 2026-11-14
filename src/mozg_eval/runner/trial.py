@@ -93,7 +93,7 @@ class TrialRunner:
         self._pending: set[asyncio.Task[None]] = set()
 
     async def run(self, request: TrialRequest, settings: dict[str, Setting]) -> list[Event]:
-        """Return the events exactly as stored; the last one is always `end`."""
+        """Return the events exactly as stored, ending with `end`; see `append` for later ones."""
         start = Start(
             driver=self.driver.name,
             driver_version=await self.driver.version(),
@@ -121,6 +121,10 @@ class TrialRunner:
             timer.cancel()
         await self._emit(request.trial, self._end(driver_end))
         return self.events
+
+    async def append(self, trial: str, payload: Payload) -> None:
+        """Record a core-made event after `end`, such as a post-run workspace check."""
+        await self._emit(trial, payload)
 
     async def _emit(self, trial: str, payload: Payload) -> None:
         event = Event(

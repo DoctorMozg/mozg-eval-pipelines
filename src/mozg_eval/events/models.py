@@ -17,6 +17,7 @@ from mozg_eval.spec.models import StrictModel, ToolKind
 type Evidence = Literal["native", "inferred"]
 type EndStatus = Literal["ok", "error", "cancelled", "timeout"]
 type SettingSource = Literal["default", "case", "suite", "config", "cli"]
+type ChangeKind = Literal["created", "modified", "deleted"]
 
 
 class Setting(StrictModel):
@@ -73,7 +74,7 @@ class SubagentSpawned(StrictModel):
 class FileChange(StrictModel):
     type: Literal["file_change"] = "file_change"
     path: str = Field(description="absolute path inside the workspace")
-    change: Literal["created", "modified", "deleted"]
+    change: ChangeKind
 
 
 class HookFired(StrictModel):
