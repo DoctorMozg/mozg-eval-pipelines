@@ -591,6 +591,9 @@ Pi and OpenCode have no sandbox at all. Shell-granted cases for them run with th
 isolation** option, not on the host. Until that option lands (section 6, Later), the runner skips
 those cases with a reason instead of running them on the host.
 
+Pi loads skills with its `read` tool, so a case that grants only `skill` also lets the agent read
+any file on Pi. Routing results on Pi can differ from Claude Code for that reason alone.
+
 **Known limitation: running mzeval from inside Claude Code in auto mode** (found 2026-11-14). The
 Claude driver starts `claude -p --permission-mode=bypassPermissions`, because a headless session
 can't answer permission prompts. Claude Code's auto-mode classifier lets that through when the case
@@ -644,7 +647,8 @@ Python distribution, so with `PYAPP_SKIP_INSTALL` the binary makes no network ca
 - Event model, the stdio driver protocol, the streaming run log and guards.
 - Storage layer with the SQLite implementation and the contract tests.
 - Drivers for Claude Code and Codex first, then OpenCode V2 (pinned version, because its JSON
-  stream is still changing), then Pi.
+  stream is still changing; built against `anomalyco/opencode` 2.3.0), then Pi (built against
+  `@earendil-works/pi-coding-agent` 1.5.2).
 - Local runner with full isolation, fixtures and hash-freeze.
 - Deterministic graders, the LLM judge on PydanticAI (API keys: Anthropic, OpenAI, OpenRouter), the cache, `rejudge` and `renormalize`.
 - Stats from 4.6, the static HTML report with local trends, `plan` and the spend ledger.

@@ -11,6 +11,7 @@ from mozg_eval import __version__
 from mozg_eval.drivers.claude import ClaudeDriver
 from mozg_eval.drivers.codex import CodexDriver
 from mozg_eval.drivers.opencode import OpenCodeDriver
+from mozg_eval.drivers.pi import PiDriver
 from mozg_eval.grading.stats import SuiteStats
 from mozg_eval.grading.support import DriverSupport
 from mozg_eval.importers.claude_plugin_eval import (
@@ -39,12 +40,14 @@ class DriverName(StrEnum):
     claude = "claude"
     codex = "codex"
     opencode = "opencode"
+    pi = "pi"
 
 
-DRIVERS: dict[DriverName, type[ClaudeDriver | CodexDriver | OpenCodeDriver]] = {
+DRIVERS: dict[DriverName, type[ClaudeDriver | CodexDriver | OpenCodeDriver | PiDriver]] = {
     DriverName.claude: ClaudeDriver,
     DriverName.codex: CodexDriver,
     DriverName.opencode: OpenCodeDriver,
+    DriverName.pi: PiDriver,
 }
 
 import_app = typer.Typer(help="Convert cases from other eval tools.", no_args_is_help=True)

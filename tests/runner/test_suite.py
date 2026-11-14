@@ -189,7 +189,7 @@ class TestRunCommand:
         stores.results.close()
         assert trial.driver == "codex"
 
-    @pytest.mark.parametrize(("driver", "cost"), [("opencode", "$0.0011")])
+    @pytest.mark.parametrize(("driver", "cost"), [("opencode", "$0.0011"), ("pi", "$0.0003")])
     def test_driver_without_a_sandbox_runs_a_skill_case(
         self, suite: Path, fake_agent: Path, tmp_path: Path, driver: str, cost: str
     ) -> None:

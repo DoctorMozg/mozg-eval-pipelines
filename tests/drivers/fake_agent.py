@@ -1,7 +1,8 @@
-"""Stands in for an agent CLI (opencode): records how it was started, then replays a fixture.
+"""Stands in for an agent CLI (opencode, pi): records how it was started, then replays a fixture.
 
 `--version` prints FAKE_VERSION. FAKE_EXIT sets the exit code after replaying.
 FAKE_MODE: replay (default); hang ignores SIGTERM and never writes.
+Fixture paths under /tmp/mzeval-trial/home are replayed under the real HOME.
 """
 
 import json
@@ -27,7 +28,7 @@ def main() -> int:
         signal.signal(signal.SIGTERM, signal.SIG_IGN)
         time.sleep(60)
     with open(os.environ["FAKE_FIXTURE"]) as fixture:
-        sys.stdout.write(fixture.read())
+        sys.stdout.write(fixture.read().replace("/tmp/mzeval-trial/home", os.environ["HOME"]))
     sys.stdout.flush()
     return int(os.environ.get("FAKE_EXIT", "0"))
 
