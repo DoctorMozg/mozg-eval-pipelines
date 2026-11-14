@@ -14,6 +14,7 @@ from mozg_eval.drivers.opencode import OpenCodeDriver
 from mozg_eval.drivers.pi import PiDriver
 from mozg_eval.grading.compare import Comparison, arm_scores
 from mozg_eval.grading.graders import EXPECT
+from mozg_eval.grading.models import GradeResult
 from mozg_eval.grading.routing import RoutedTrial, Routing
 from mozg_eval.grading.stats import SuiteStats
 from mozg_eval.grading.support import DriverSupport
@@ -25,6 +26,7 @@ from mozg_eval.importers.claude_plugin_eval import (
 from mozg_eval.judge.cache import JudgeCache
 from mozg_eval.judge.grading import JudgeSetupError, TrialJudge
 from mozg_eval.report.html import ReportBuilder
+from mozg_eval.report.junit import JUnitReport
 from mozg_eval.runner.plan import CostHistory, Planner
 from mozg_eval.runner.rejudge import Rejudger
 from mozg_eval.runner.suite import FixtureError, SuiteRunner, TrialSummary
@@ -140,6 +142,9 @@ def run(
         bool,
         typer.Option(help="Also run each case without its bundle and compare the two arms."),
     ] = False,
+    junit: Annotated[
+        Path | None, typer.Option(help="Write a JUnit XML report here, one testcase per case.")
+    ] = None,
 ) -> None:
     """Run and grade cases on one agent.
 
@@ -164,7 +169,7 @@ def run(
         lambda cases: TrialJudge.for_cases(cases, judge, _judge_cache()),
     )
     try:
-        record, trials = asyncio.run(suite.run(files, ablation))
+        result = asyncio.run(suite.run(files, ablation))
     except JudgeSetupError as exc:
         typer.echo(f"judge: {exc}", err=True)
         raise typer.Exit(2) from exc
@@ -177,6 +182,9 @@ def run(
         raise typer.Exit(2) from exc
     finally:
         stores.results.close()
+    record, trials = result.run, result.trials
+    for name, reason in sorted(result.skipped.items()):
+        typer.echo(f"SKIP {name}: {reason}")
     for trial in trials:
         cost = "n/a" if trial.record.cost_usd is None else f"${trial.record.cost_usd:.4f}"
         skills = ", ".join(trial.skills) or "none"
@@ -190,7 +198,7 @@ def run(
             if grade.verdict == "fail":
                 typer.echo(f"    {grade.name}: {grade.detail}")
     if ablation:
-        grades = {t.record.id: t.grades for t in trials}
+        grades = grades_of(trials)
         by_arm = {
             arm: arm_scores([t.record for t in trials if t.record.arm == arm], grades, True)
             for arm in ("with", "without")
@@ -199,7 +207,12 @@ def run(
             typer.echo(line)
     _echo_routing(files, [t for t in trials if t.record.arm == "with"])
     _echo_spend(trials, agents=True)
-    stats = SuiteStats.of([t.record for t in trials if t.record.arm == "with"], threshold)
+    gated = [t.record for t in trials if t.record.arm == "with"]
+    if junit is not None:
+        report = JUnitReport(f"mzeval.{driver.value}", threshold)
+        junit.parent.mkdir(parents=True, exist_ok=True)
+        junit.write_text(report.build(gated, grades_of(trials), result.skipped), encoding="utf-8")
+    stats = SuiteStats.of(gated, threshold)
     rate, low, high = stats.pass_rate()
     typer.echo(
         f"run {record.id}: {len(trials)} trials, {len(stats.cases)} cases, "
@@ -210,6 +223,10 @@ def run(
     if stats.failing():
         typer.echo("below threshold: " + ", ".join(c.case for c in stats.failing()))
         raise typer.Exit(1)
+
+
+def grades_of(trials: list[TrialSummary]) -> dict[str, list[GradeResult]]:
+    return {t.record.id: t.grades for t in trials}
 
 
 def _total(costs: list[float | None], what: str) -> str:

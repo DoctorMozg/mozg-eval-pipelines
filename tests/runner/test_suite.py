@@ -226,6 +226,20 @@ class TestRunCommand:
         assert "0 trials" in result.output
         assert not (tmp_path / "record.json").exists()
 
+    def test_junit_report_and_skip_reasons_are_written(
+        self, suite: Path, fake_claude: Path, tmp_path: Path
+    ) -> None:
+        junit = tmp_path / "out" / "junit.xml"
+        argv = ["run", str(suite), "--driver", "opencode", "--executable", str(fake_claude)]
+        case = suite / "case.mzeval.yaml"
+        case.write_text(case.read_text().replace("tools: [skill]", "tools: [skill, shell]"))
+
+        result = CliRunner().invoke(app, [*argv, "--junit", str(junit)])
+
+        assert result.exit_code == 0, result.output
+        assert "SKIP remember-decision: opencode has no sandbox" in result.output
+        assert 'skipped="1"' in junit.read_text()
+
     def test_case_with_nothing_codex_can_grade_is_skipped(
         self, suite: Path, fake_codex: Path, tmp_path: Path
     ) -> None:

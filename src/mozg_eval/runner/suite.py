@@ -46,6 +46,13 @@ class TrialSummary:
     judge_spend: list[JudgeSpend] = field(default_factory=list)
 
 
+@dataclass(frozen=True)
+class SuiteResult:
+    run: RunRecord
+    trials: list[TrialSummary]
+    skipped: dict[str, str] = field(default_factory=dict)  # case name -> why it didn't run
+
+
 async def _file_chunks(path: Path) -> AsyncIterator[bytes]:
     yield path.read_bytes()
 
@@ -101,25 +108,24 @@ class SuiteRunner:
             log.warning("%s: no bundle or no arm-both grader, so no without arm", case.name)
         return ["with"]
 
-    async def run(
-        self, case_files: Sequence[Path], ablation: bool = False
-    ) -> tuple[RunRecord, list[TrialSummary]]:
+    async def run(self, case_files: Sequence[Path], ablation: bool = False) -> SuiteResult:
         loader = CaseLoader()
         cases = [(path.parent, loader.load(path)) for path in case_files]
         judge = self.make_judge([case for _, case in cases])
         run = RunRecord(id=new_id(), started_at=datetime.now(UTC), trigger="local")
         self.stores.results.add_run(self.ws, run)
         log.info("run %s: %d cases on %s", run.id, len(cases), self.driver_name)
-        summaries = []
+        result = SuiteResult(run, [])
         for case_dir, case in cases:
             if reason := self.support.skip_reason(case):
                 log.warning("skipping %s: %s", case.name, reason)
+                result.skipped[case.name] = reason
                 continue
             execution = case.execution.model_copy(update=self.overrides)
             for arm in self.arms(case, ablation):
                 for repeat in range(1, execution.runs + 1):
-                    summaries.append(await self._trial(run, judge, case_dir, case, arm, repeat))
-        return run, summaries
+                    result.trials.append(await self._trial(run, judge, case_dir, case, arm, repeat))
+        return result
 
     async def _trial(
         self,
