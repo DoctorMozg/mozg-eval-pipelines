@@ -59,6 +59,11 @@ class ToolResult(StrictModel):
     output: str = ""
 
 
+def bare_name(name: str) -> str:
+    """`plugin:skill` -> `skill`, so skill names match across drivers that have no namespaces."""
+    return name.rpartition(":")[2]
+
+
 class SkillActivated(StrictModel):
     type: Literal["skill_activated"] = "skill_activated"
     skill: str

@@ -19,6 +19,7 @@ from mozg_eval.events.models import (
     SubagentSpawned,
     ToolCall,
     ToolResult,
+    bare_name,
 )
 from mozg_eval.grading.models import GradeResult, Verdict
 from mozg_eval.grading.support import DriverSupport
@@ -44,10 +45,6 @@ from mozg_eval.spec.models import (
 
 EXPECT = "expect"
 _PATH_KEYS = ("file_path", "path", "notebook_path")
-
-
-def _bare(name: str) -> str:
-    return name.rpartition(":")[2]
 
 
 def _paths(tool_input: dict[str, JsonValue]) -> list[str]:
@@ -130,11 +127,11 @@ class TrialGrader:
         detail = f"fired: {', '.join(fired) or 'none'}"
         expected = self.case.expect.skill
         if isinstance(expected, SkillNotExpected):
-            ok = _bare(expected.not_) not in fired and (
-                expected.owner is None or _bare(expected.owner) in fired
+            ok = bare_name(expected.not_) not in fired and (
+                expected.owner is None or bare_name(expected.owner) in fired
             )
         else:
-            ok = expected is not None and _bare(expected) in fired
+            ok = expected is not None and bare_name(expected) in fired
         verdict: Verdict = "pass" if ok else "fail"
         return GradeResult(name=EXPECT, verdict=verdict, detail=detail, arm=arm)
 
@@ -164,12 +161,12 @@ class TrialGrader:
         match grader:
             case SkillGrader():
                 return sum(
-                    isinstance(p, SkillActivated) and p.skill == _bare(grader.skill)
+                    isinstance(p, SkillActivated) and p.skill == bare_name(grader.skill)
                     for p in payloads
                 )
             case SubagentGrader():
                 return sum(
-                    isinstance(p, SubagentSpawned) and p.subagent == _bare(grader.subagent)
+                    isinstance(p, SubagentSpawned) and p.subagent == bare_name(grader.subagent)
                     for p in payloads
                 )
             case ToolCalledGrader():

@@ -22,6 +22,7 @@ from mozg_eval.events.models import (
     ToolCall,
     ToolResult,
     Usage,
+    bare_name,
 )
 from mozg_eval.spec.models import ToolKind
 
@@ -85,11 +86,6 @@ class StreamLine(_Loose):
     total_cost_usd: float | None = None
 
 
-def _bare(name: str) -> str:
-    """`plugin:skill` -> `skill`, so skill names match across drivers that have no namespaces."""
-    return name.rpartition(":")[2]
-
-
 def _text(content: str | list[dict[str, JsonValue]]) -> str:
     if isinstance(content, str):
         return content
@@ -107,9 +103,9 @@ def _tool_call(block: _Block) -> list[Payload]:
     ]
     target = block.input.get("skill" if block.name == "Skill" else "subagent_type")
     if block.name == "Skill" and isinstance(target, str):
-        events.append(SkillActivated(skill=_bare(target)))
+        events.append(SkillActivated(skill=bare_name(target)))
     elif block.name == "Agent" and isinstance(target, str):
-        events.append(SubagentSpawned(subagent=_bare(target)))
+        events.append(SubagentSpawned(subagent=bare_name(target)))
     return events
 
 

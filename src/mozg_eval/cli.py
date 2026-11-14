@@ -13,6 +13,8 @@ from mozg_eval.drivers.codex import CodexDriver
 from mozg_eval.drivers.opencode import OpenCodeDriver
 from mozg_eval.drivers.pi import PiDriver
 from mozg_eval.grading.compare import Comparison, arm_scores
+from mozg_eval.grading.graders import EXPECT
+from mozg_eval.grading.routing import RoutedTrial, Routing
 from mozg_eval.grading.stats import SuiteStats
 from mozg_eval.grading.support import DriverSupport
 from mozg_eval.importers.claude_plugin_eval import (
@@ -24,7 +26,7 @@ from mozg_eval.judge.cache import JudgeCache
 from mozg_eval.judge.grading import JudgeSetupError, TrialJudge
 from mozg_eval.report.html import ReportBuilder
 from mozg_eval.runner.rejudge import Rejudger
-from mozg_eval.runner.suite import FixtureError, SuiteRunner
+from mozg_eval.runner.suite import FixtureError, SuiteRunner, TrialSummary
 from mozg_eval.spec.loader import CASE_FILENAME, CaseLoader, CaseLoadError
 from mozg_eval.spec.models import Case
 from mozg_eval.storage.base import DEFAULT_WORKSPACE
@@ -194,6 +196,7 @@ def run(
         }
         for line in Comparison.of(by_arm["with"], by_arm["without"]).summary("with", "without"):
             typer.echo(line)
+    _echo_routing(files, [t for t in trials if t.record.arm == "with"])
     stats = SuiteStats.of([t.record for t in trials if t.record.arm == "with"], threshold)
     rate, low, high = stats.pass_rate()
     typer.echo(
@@ -205,6 +208,21 @@ def run(
     if stats.failing():
         typer.echo("below threshold: " + ", ".join(c.case for c in stats.failing()))
         raise typer.Exit(1)
+
+
+def _echo_routing(files: list[Path], trials: list[TrialSummary]) -> None:
+    """Only trials whose driver could report skills count, so silence isn't read as a miss."""
+    cases = {case.name: case for case in map(CaseLoader().load, files)}
+    routed = [
+        RoutedTrial.of(cases[t.case], t.skills)
+        for t in trials
+        if any(g.name == EXPECT and g.verdict != "n/a" for g in t.grades)
+    ]
+    labelled = [r for r in routed if r is not None]
+    if labelled:
+        typer.echo(f"routing over {len(labelled)} trials:")
+        for line in Routing.of(labelled).summary():
+            typer.echo(f"  {line}")
 
 
 @app.command()

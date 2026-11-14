@@ -59,6 +59,8 @@ class TestRunCommand:
         assert result.exit_code == 0, result.output
         assert result.output.count("remember-decision #") == 2
         assert "ok, skills: memory-note, $0.0040" in result.output
+        assert "routing over 2 trials:" in result.output
+        assert "memory-note: precision 1.00, recall 1.00, F1 1.00" in result.output
         stores = open_stores(StorageConfig.load(tmp_path, env={}))
         (run,) = stores.results.list_runs("local")
         trials = stores.results.list_trials("local", run.id)
