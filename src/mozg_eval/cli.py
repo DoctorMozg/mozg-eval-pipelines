@@ -162,6 +162,9 @@ def run(
     tag: Annotated[
         list[str] | None, typer.Option("--tag", help="Run only cases with this tag; repeatable.")
     ] = None,
+    jobs: Annotated[
+        int, typer.Option(min=1, max=16, help="Trials to run side by side; they share one login.")
+    ] = 1,
     push: Annotated[
         bool,
         typer.Option(
@@ -202,7 +205,7 @@ def run(
     )
     try:
         select = CaseFilter(tuple(case or ()), tuple(tag or ()))
-        result = asyncio.run(suite.run(files, RunOptions(ablation, select)))
+        result = asyncio.run(suite.run(files, RunOptions(ablation, select, jobs)))
     except JudgeSetupError as exc:
         typer.echo(f"judge: {exc}", err=True)
         raise typer.Exit(2) from exc

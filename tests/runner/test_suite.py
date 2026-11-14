@@ -375,6 +375,34 @@ class TestCaseSelection:
         assert not (tmp_path / "record.json").exists()
 
 
+class TestJobs:
+    @pytest.mark.parametrize(("jobs", "overlap"), [([], False), (["--jobs", "2"], True)])
+    def test_jobs_run_trials_side_by_side_and_keep_the_plan_order(
+        self,
+        suite: Path,
+        fake_claude: Path,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        jobs: list[str],
+        overlap: bool,
+    ) -> None:
+        spans = tmp_path / "spans.txt"
+        monkeypatch.setenv("FAKE_DELAY_S", "0.5")
+        monkeypatch.setenv("FAKE_SPANS", str(spans))
+        argv = ["run", str(suite), "--runs", "2", "--executable", str(fake_claude), *jobs]
+
+        result = CliRunner().invoke(app, argv)
+
+        assert result.exit_code == 0, result.output
+        first, second = sorted(
+            tuple(map(float, line.split())) for line in spans.read_text().splitlines()
+        )
+        assert (second[0] < first[1]) is overlap
+        assert result.output.index("remember-decision #1") < result.output.index(
+            "remember-decision #2"
+        )
+
+
 class TestPlanCommand:
     def test_estimate_comes_from_stored_runs_and_spends_nothing(
         self, suite: Path, fake_claude: Path, tmp_path: Path

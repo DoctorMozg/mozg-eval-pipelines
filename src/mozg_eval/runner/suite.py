@@ -65,6 +65,7 @@ class CaseFilter:
 class RunOptions:
     ablation: bool = False
     select: CaseFilter = CaseFilter()
+    jobs: int = 1  # trials that run side by side, each in its own temp HOME and workspace
 
 
 @dataclass(frozen=True)
@@ -151,6 +152,7 @@ class SuiteRunner:
         self.stores.results.add_run(self.ws, run)
         log.info("run %s: %d cases on %s", run.id, len(cases), self.driver_name)
         result = SuiteResult(run, [])
+        planned: list[tuple[Path, Case, TrialArm, int]] = []
         for case_dir, case in cases:
             if reason := self.support.skip_reason(case):
                 log.warning("skipping %s: %s", case.name, reason)
@@ -158,8 +160,22 @@ class SuiteRunner:
                 continue
             execution = case.execution.model_copy(update=self.overrides)
             for arm in self.arms(case, options.ablation):
-                for repeat in range(1, execution.runs + 1):
-                    result.trials.append(await self._trial(run, judge, case_dir, case, arm, repeat))
+                planned += [
+                    (case_dir, case, arm, repeat) for repeat in range(1, execution.runs + 1)
+                ]
+        slots = asyncio.Semaphore(options.jobs)
+
+        async def trial(case_dir: Path, case: Case, arm: TrialArm, repeat: int) -> TrialSummary:
+            async with slots:
+                return await self._trial(run, judge, case_dir, case, arm, repeat)
+
+        # A task group cancels the trials still running when one fails, such as on a fixture error.
+        try:
+            async with asyncio.TaskGroup() as group:
+                tasks = [group.create_task(trial(*item)) for item in planned]
+        except* FixtureError as failed:
+            raise failed.exceptions[0] from None
+        result.trials.extend(task.result() for task in tasks)
         return result
 
     async def _trial(
