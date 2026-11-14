@@ -1,5 +1,6 @@
 import asyncio
 import json
+import os
 from enum import StrEnum
 from pathlib import Path
 from typing import Annotated
@@ -25,6 +26,7 @@ from mozg_eval.importers.claude_plugin_eval import (
 )
 from mozg_eval.judge.cache import JudgeCache
 from mozg_eval.judge.grading import JudgeSetupError, TrialJudge
+from mozg_eval.push import SERVER_ENV, TOKEN_ENV, PushError, PushTarget, RunPusher
 from mozg_eval.report.html import ReportBuilder
 from mozg_eval.report.junit import JUnitReport
 from mozg_eval.runner.plan import CostHistory, Planner
@@ -145,12 +147,20 @@ def run(
     junit: Annotated[
         Path | None, typer.Option(help="Write a JUnit XML report here, one testcase per case.")
     ] = None,
+    push: Annotated[
+        bool,
+        typer.Option(
+            help=f"Upload the run to ${SERVER_ENV} with ${TOKEN_ENV}; a failure is reported."
+        ),
+    ] = False,
 ) -> None:
     """Run and grade cases on one agent.
 
     Exit 0 when every case meets the threshold, 1 when one doesn't, 2 when a trial errored.
-    With --ablation only the with-bundle arm counts toward the threshold.
+    With --ablation only the with-bundle arm counts toward the threshold. A failed --push
+    never changes the exit code; `mzeval push RUN` retries it.
     """
+    target = _push_target() if push else None
     files = CaseLoader.discover(paths)
     if not files:
         typer.echo(f"no {CASE_FILENAME} found under: {', '.join(map(str, paths))}", err=True)
@@ -218,11 +228,40 @@ def run(
         f"run {record.id}: {len(trials)} trials, {len(stats.cases)} cases, "
         f"{rate:.0%} at or above {threshold:.0%} (95% CI {low:.0%}-{high:.0%})"
     )
+    if target is not None and not _push_run(target, record.id):
+        typer.echo(f"retry with: mzeval push {record.id}", err=True)
     if any(trial.record.status in ("error", "timeout") for trial in trials):
         raise typer.Exit(2)
     if stats.failing():
         typer.echo("below threshold: " + ", ".join(c.case for c in stats.failing()))
         raise typer.Exit(1)
+
+
+def _push_target() -> PushTarget:
+    try:
+        return PushTarget.from_env(os.environ)
+    except PushError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(2) from exc
+
+
+def _push_run(target: PushTarget, run_id: str) -> bool:
+    """Push a stored run; a failure is reported and returned, so callers pick the exit code."""
+    stores = open_stores(StorageConfig.load(Path.cwd()))
+
+    async def push() -> int:
+        async with target.client() as client:
+            return await RunPusher(stores, DEFAULT_WORKSPACE, client).push(run_id)
+
+    try:
+        count = asyncio.run(push())
+    except (PushError, LookupError) as exc:
+        typer.echo(f"push failed: {exc}", err=True)
+        return False
+    finally:
+        stores.results.close()
+    typer.echo(f"pushed run {run_id}: {count} trials to {target.server}")
+    return True
 
 
 def grades_of(trials: list[TrialSummary]) -> dict[str, list[GradeResult]]:
@@ -376,6 +415,15 @@ def compare(
         lines = Comparison.of(current, previous).summary(run_id[-8:], baseline[-8:])
     for line in lines:
         typer.echo(line)
+
+
+@app.command("push")
+def push_command(
+    run_id: Annotated[str, typer.Argument(help="The stored run to upload.")],
+) -> None:
+    """Upload a stored run to $MZEVAL_SERVER with $MZEVAL_TOKEN; resending a run is safe."""
+    if not _push_run(_push_target(), run_id):
+        raise typer.Exit(2)
 
 
 @app.command()

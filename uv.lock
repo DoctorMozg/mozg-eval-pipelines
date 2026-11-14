@@ -723,6 +723,7 @@ version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "alembic" },
+    { name = "httpx2" },
     { name = "jinja2" },
     { name = "pydantic" },
     { name = "pydantic-ai-slim", extra = ["anthropic", "openai", "openrouter"] },
@@ -743,6 +744,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "alembic", specifier = ">=1.20.1,<2" },
+    { name = "httpx2", specifier = ">=2.16,<3" },
     { name = "jinja2", specifier = ">=3.1.6,<4" },
     { name = "pydantic", specifier = ">=2.14,<3" },
     { name = "pydantic-ai-slim", extras = ["anthropic", "openai", "openrouter"], specifier = "==2.68.0" },

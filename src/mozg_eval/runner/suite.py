@@ -27,6 +27,9 @@ from mozg_eval.storage.config import Stores
 
 log = logging.getLogger(__name__)
 
+# Files a driver leaves in its raw dir; each is stored as an artifact of the trial when present.
+TRIAL_ARTIFACTS = ("raw.jsonl", "stderr.log")
+
 # (home, raw_dir) -> a driver for one trial; drivers keep per-trial process state.
 type DriverFactory = Callable[[Path, Path], Driver]
 # Builds the suite's judges once its cases are loaded, before any trial starts.
@@ -175,7 +178,7 @@ class SuiteRunner:
             for payload in post_run:
                 await runner.append(trial_id, payload)
             judged = await judge.grade(case, [e.payload for e in events], workspace)
-            for name in ("raw.jsonl", "stderr.log"):
+            for name in TRIAL_ARTIFACTS:
                 if (raw_dir / name).exists():
                     ref = ArtifactRef(run=run.id, trial=trial_id, name=name)
                     await self.stores.artifacts.put(self.ws, ref, _file_chunks(raw_dir / name))

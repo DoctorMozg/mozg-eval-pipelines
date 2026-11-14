@@ -1,6 +1,9 @@
 import json
 import sys
-from collections.abc import Callable
+import threading
+from collections.abc import Callable, Iterator
+from dataclasses import dataclass, field
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 import pytest
@@ -98,3 +101,49 @@ def quoting_judge() -> Callable[..., FunctionModel]:
         return FunctionModel(answer, model_name=model_name)
 
     return make
+
+
+@dataclass(frozen=True)
+class Received:
+    method: str
+    path: str
+    auth: str | None
+    body: bytes
+
+
+@dataclass
+class IngestStub:
+    """Answers every request with 200, or 500 for paths under `fail`, and records them."""
+
+    url: str = ""
+    fail: str | None = None
+    requests: list[Received] = field(default_factory=list)
+
+
+@pytest.fixture
+def ingest_server(monkeypatch: pytest.MonkeyPatch) -> Iterator[IngestStub]:
+    stub = IngestStub()
+
+    class Handler(BaseHTTPRequestHandler):
+        def _answer(self) -> None:
+            body = self.rfile.read(int(self.headers.get("Content-Length", 0)))
+            auth = self.headers.get("Authorization")
+            stub.requests.append(Received(self.command, self.path, auth, body))
+            failing = stub.fail is not None and self.path.startswith(stub.fail)
+            self.send_response(500 if failing else 200)
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+
+        do_PUT = do_POST = _answer
+
+        def log_message(self, format: str, *args: object) -> None:
+            pass
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    stub.url = f"http://127.0.0.1:{server.server_port}"
+    monkeypatch.setenv("MZEVAL_SERVER", stub.url)
+    monkeypatch.setenv("MZEVAL_TOKEN", "secret-token")
+    yield stub
+    server.shutdown()
+    server.server_close()

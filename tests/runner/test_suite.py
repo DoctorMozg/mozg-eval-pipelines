@@ -4,6 +4,7 @@ from collections.abc import Callable
 from pathlib import Path
 
 import pytest
+from conftest import IngestStub
 from pydantic_ai.models.function import FunctionModel
 from typer.testing import CliRunner
 
@@ -239,6 +240,24 @@ class TestRunCommand:
         assert result.exit_code == 0, result.output
         assert "SKIP remember-decision: opencode has no sandbox" in result.output
         assert 'skipped="1"' in junit.read_text()
+
+    @pytest.mark.parametrize("fail", [None, "/v1/runs"])
+    def test_push_failure_is_reported_but_the_eval_decides_the_exit_code(
+        self, suite: Path, fake_claude: Path, ingest_server: IngestStub, fail: str | None
+    ) -> None:
+        ingest_server.fail = fail
+        argv = ["run", str(suite), "--runs", "1", "--push", "--executable", str(fake_claude)]
+
+        result = CliRunner().invoke(app, argv)
+
+        assert result.exit_code == 0, result.output
+        if fail is None:
+            assert "pushed run" in result.output
+            artifacts = [r.path.rsplit("/", 1)[1] for r in ingest_server.requests[-2:]]
+            assert artifacts == ["raw.jsonl", "stderr.log"]
+        else:
+            assert "push failed: PUT /v1/runs/" in result.output
+            assert "retry with: mzeval push" in result.output
 
     def test_case_with_nothing_codex_can_grade_is_skipped(
         self, suite: Path, fake_codex: Path, tmp_path: Path
