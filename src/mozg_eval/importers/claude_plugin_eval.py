@@ -12,6 +12,12 @@ import yaml
 from pydantic import ValidationError
 
 from mozg_eval.drivers.claude import CLAUDE_TOOL_KINDS
+from mozg_eval.importers.claude_wire import (
+    Rewrite,
+    ignoring_case,
+    rewrite_trace,
+    rewrite_write_input,
+)
 from mozg_eval.spec.loader import CASE_FILENAME
 from mozg_eval.spec.models import SCHEMA, Case
 
@@ -142,7 +148,7 @@ class _CaseConverter:
         if "add_dirs" in context:
             case["add_dirs"] = context["add_dirs"]
         case["execution"] = self._execution(raw.get("execution") or {})
-        converted = [self._grader(grader) for grader in graders]
+        converted = [g for grader in graders for g in self._grader(grader)]
         if converted:
             case["graders"] = converted
 
@@ -257,7 +263,7 @@ class _CaseConverter:
                 execution[key] = raw[key]
         return execution
 
-    def _grader(self, grader: RawGrader) -> dict[str, Any]:
+    def _grader(self, grader: RawGrader) -> list[dict[str, Any]]:
         convert = {
             "tool_used": self._tool_used,
             "regex": self._regex,
@@ -268,16 +274,30 @@ class _CaseConverter:
         }.get(grader["type"])
         if convert is None:
             raise CaseImportError(f"{self.case_file}: unknown grader type {grader['type']!r}")
-        converted = {"name": grader["name"], **convert(grader)}
-        default_arm = "with" if converted["type"] == "skill" else "both"
-        arm = _arm(grader)
-        if arm != default_arm:
-            converted["arm"] = arm
-        if float(grader.get("weight", 1)) != 1:
-            converted["weight"] = grader["weight"]
+        result = convert(grader)
+        converted = []
+        for part in result if isinstance(result, list) else [result]:
+            suffix = part.pop("suffix", "")
+            named = {"name": grader["name"] + suffix, **part}
+            default_arm = "with" if named["type"] == "skill" else "both"
+            arm = _arm(grader)
+            if arm != default_arm:
+                named["arm"] = arm
+            if float(grader.get("weight", 1)) != 1:
+                named["weight"] = grader["weight"]
+            converted.append(named)
         return converted
 
-    def _tool_used(self, grader: RawGrader) -> dict[str, Any]:
+    def _rewritten(
+        self, name: str, rewrite: Rewrite, limits: dict[str, Any]
+    ) -> list[dict[str, Any]]:
+        self._note(rewrite.rule)
+        self._flag(
+            name, "rewritten by shape from a regex over Claude's JSON; check the new pattern"
+        )
+        return [g | limits for g in rewrite.graders]
+
+    def _tool_used(self, grader: RawGrader) -> dict[str, Any] | list[dict[str, Any]]:
         tool = grader["tool"]
         if tool not in CLAUDE_TOOL_KINDS:
             raise CaseImportError(f"{self.case_file}: no canonical tool kind for {tool!r}")
@@ -300,6 +320,12 @@ class _CaseConverter:
                 "path_match": _path_regex(pattern),
                 **limits,
             }
+        if (
+            pattern
+            and kind in ("write", "edit")
+            and (rewrite := rewrite_write_input(pattern, absent=limits.get("max") == 0))
+        ):
+            return self._rewritten(grader["name"], rewrite, limits)
         converted: dict[str, Any] = {"type": "tool_called", "kind": kind, **limits}
         if pattern:
             converted["match"] = pattern
@@ -309,10 +335,21 @@ class _CaseConverter:
         self._note(f"tool_used {tool} -> tool_called")
         return converted
 
-    def _regex(self, grader: RawGrader) -> dict[str, Any]:
-        limits = _match_limits(str(grader.get("match", "contains")))
+    def _regex(self, grader: RawGrader) -> dict[str, Any] | list[dict[str, Any]]:
+        mode = str(grader.get("match", "contains"))
+        limits = _match_limits(mode)
         flags = {"flags": grader["flags"]} if grader.get("flags") else {}
         target = grader.get("target", "last_message")
+        # count:N counts regex matches, which a file or hook count can't stand in for. The `m`
+        # flag only re-anchored `^` to a stream line, and a rewrite anchors at a message or file.
+        raw_flags = str(grader.get("flags", ""))
+        portable = (
+            target == "trace" and set(raw_flags) <= set("im") and not mode.startswith("count:")
+        )
+        if portable and (rewrite := rewrite_trace(grader["pattern"])):
+            if "i" in raw_flags:
+                rewrite = ignoring_case(rewrite)
+            return self._rewritten(grader["name"], rewrite, limits)
         if target == "trace":
             self._note("regex trace -> raw_regex claude")
             self._flag(grader["name"], "regex over Claude's trace: kept as raw_regex, Claude only")

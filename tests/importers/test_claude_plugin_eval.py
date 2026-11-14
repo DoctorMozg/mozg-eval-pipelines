@@ -151,7 +151,7 @@ class TestGraders:
 
         assert [g["target"] for g in converted] == [{"file": "out.md"}, "created_files"]
 
-    def test_trace_regex_is_kept_for_claude_and_flagged(self, convert: Convert) -> None:
+    def test_trace_regex_with_no_portable_shape_is_kept_for_claude(self, convert: Convert) -> None:
         grader = {"name": "hook", "type": "regex", "pattern": "hook_response", "target": "trace"}
 
         result = convert(case_11([grader], tags=["hooks"]))
@@ -160,6 +160,63 @@ class TestGraders:
             {"name": "hook", "type": "raw_regex", "driver": "claude", "pattern": "hook_response"}
         ]
         assert len(result.flags) == 1
+
+    def test_trace_regex_with_a_known_shape_is_rewritten_and_flagged(
+        self, convert: Convert
+    ) -> None:
+        grader = {
+            "name": "not-read",
+            "type": "regex",
+            "pattern": '"type":"tool_result"[^\\n]*PNPM',
+            "target": "trace",
+            "match": "not_contains",
+            "flags": "im",
+        }
+
+        result = convert(case_11([grader], tags=["hooks"]))
+
+        assert result.case["graders"] == [
+            {
+                "name": "not-read",
+                "type": "regex",
+                "target": "tool_results",
+                "pattern": "PNPM",
+                "flags": "i",
+                "min": 0,
+                "max": 0,
+            }
+        ]
+        assert "rewritten by shape" in result.flags[0].reason
+
+    def test_trace_regex_counting_matches_stays_claude_only(self, convert: Convert) -> None:
+        grader = {
+            "name": "twice",
+            "type": "regex",
+            "pattern": '"type":"tool_result"[^\\n]*x',
+            "target": "trace",
+            "match": "count:2",
+        }
+
+        [converted] = convert(case_11([grader], tags=["hooks"])).case["graders"]
+
+        assert converted["type"] == "raw_regex"
+
+    def test_absent_write_content_becomes_two_file_checks(self, convert: Convert) -> None:
+        grader = {
+            "name": "no-approval",
+            "type": "tool_used",
+            "tool": "Write",
+            "input_match": "brief_approved",
+            "min": 0,
+            "max": 0,
+        }
+
+        converted = convert(case_11([grader], tags=["gate"])).case["graders"]
+
+        assert [(g["name"], g.get("content_match"), g.get("path_match")) for g in converted] == [
+            ("no-approval", "brief_approved", None),
+            ("no-approval-path", None, "brief_approved"),
+        ]
 
     def test_write_path_check_becomes_a_file_change_check(self, convert: Convert) -> None:
         grader = {

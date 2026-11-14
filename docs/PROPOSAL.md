@@ -272,11 +272,15 @@ drivers: { exclude: [pi] }      # optional, e.g. needs subagents
 graders into labelled data for precision, recall and the confusion matrix.
 
 Deterministic graders: `skill`, `subagent`, `tool_called{kind, match, path_match}`, `tool_order`,
-`file_changed{path_match}`,
-`regex{target: final|transcript|created_files|{file}}`, `file_exists`, `command` (a script that
-runs in the workspace after the session and passes on exit 0, which `claude plugin eval` lacks), and
-`hook_fired`. Escape hatch: `raw_regex{driver: claude}` for the trace regexes that really are
-Claude-specific.
+`file_changed{path_match, content_match}`,
+`regex{target: final|transcript|replies|tool_results|created_files|{file}}`, `file_exists`,
+`command` (a script that runs in the workspace after the session and passes on exit 0, which
+`claude plugin eval` lacks), and `hook_fired{event?, match}`. Escape hatch:
+`raw_regex{driver: claude}` for the trace regexes that really are Claude-specific.
+
+Each driver declares what it reports (`capabilities`: skills, subagents, hooks, and which tool
+kinds it emits and with Claude-shaped input). A grader that needs more grades `n/a`, never `fail`
+or a vacuous `pass`, and a case with nothing gradable on a driver is skipped before it runs.
 
 As built (milestone 2), so v2 stays a superset of 1.1:
 
@@ -667,17 +671,17 @@ cover grading agent apps).
 `mzeval import claude-plugin-eval <dir>` writes v2 cases next to the old ones and a migration
 report. The old files stay until you delete them.
 
-| 1.1 pattern                                         | v2 result                                                                                                         | Count (pipelines / video) |
-| --------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- | ------------------------- |
-| `tool_used Skill` with `input_match` `"skill":"…X"` | `expect.skill: X` (or `not: X` when `max: 0`)                                                                     | 401 / 241                 |
-| `tool_used Agent` `subagent_type`                   | `subagent: X`                                                                                                     | 53 / 0                    |
-| `tool_used Write/Edit` + `file_path` regex          | `file_changed{path_match}` (`Read` and `Bash` stay `tool_called`)                                                 | 90 / 0                    |
-| `regex` on the last message or a file               | unchanged                                                                                                         | ~220 / 4                  |
-| `regex target: trace`                               | `raw_regex{driver: claude}`, flagged; rewriting to `hook_fired`, `skill` or `file_change` is a manual review step | 128 / 0                   |
-| `llm criteria`                                      | `judge.checklist` (one item per sentence, reviewed by hand)                                                       | 0 / 4                     |
-| `context.scaffold_script`                           | `fixture:` (scripts unchanged)                                                                                    | 69 / 0                    |
-| `negative` description "belongs to X"               | `expect.skill.owner: X`                                                                                           | — / 57                    |
-| `allowed_tools`                                     | canonical `tools:`                                                                                                | all                       |
+| 1.1 pattern                                         | v2 result                                                                                                                                 | Count (pipelines / video) |
+| --------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- | ------------------------- |
+| `tool_used Skill` with `input_match` `"skill":"…X"` | `expect.skill: X` (or `not: X` when `max: 0`)                                                                                             | 401 / 241                 |
+| `tool_used Agent` `subagent_type`                   | `subagent: X`                                                                                                                             | 53 / 0                    |
+| `tool_used Write/Edit` + `file_path` regex          | `file_changed{path_match}` (`Read` and `Bash` stay `tool_called`)                                                                         | 90 / 0                    |
+| `regex` on the last message or a file               | unchanged                                                                                                                                 | ~220 / 4                  |
+| `regex target: trace`                               | rewritten by shape to `hook_fired`, `regex{replies\|tool_results}` or `file_changed`, flagged; the rest stays `raw_regex{driver: claude}` | 97 + 31 kept / 0          |
+| `llm criteria`                                      | `judge.checklist` (one item per sentence, reviewed by hand)                                                                               | 0 / 4                     |
+| `context.scaffold_script`                           | `fixture:` (scripts unchanged)                                                                                                            | 69 / 0                    |
+| `negative` description "belongs to X"               | `expect.skill.owner: X`                                                                                                                   | — / 57                    |
+| `allowed_tools`                                     | canonical `tools:`                                                                                                                        | all                       |
 
 Acceptance check: run the imported suite on Claude and compare per-case pass rates with the last
 `claude plugin eval` result. Any case outside the noise band is a migration bug until proven
