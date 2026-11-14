@@ -196,6 +196,22 @@ class SqlResultStore:
         with self.engine.begin() as connection:
             connection.execute(grades.insert(), rows)
 
+    def regrade(self, ws: str, trial: str, results: Sequence[GradeResult], passed: bool) -> None:
+        names = [result.name for result in results]
+        mine = (grades.c.workspace_id == ws) & (grades.c.trial_id == trial)
+        with self.engine.begin() as connection:
+            updated = connection.execute(
+                trials.update()
+                .where(trials.c.workspace_id == ws, trials.c.id == trial)
+                .values(passed=passed)
+            )
+            if updated.rowcount != 1:
+                raise LookupError(f"no trial {trial!r} in workspace {ws!r}")
+            connection.execute(grades.delete().where(mine & grades.c.name.in_(names)))
+            if results:
+                rows = [{"workspace_id": ws, "trial_id": trial, **r.model_dump()} for r in results]
+                connection.execute(grades.insert(), rows)
+
     def list_grades(self, ws: str, run: str) -> dict[str, list[GradeResult]]:
         """Grades of every trial in the run, keyed by trial id."""
         query = (

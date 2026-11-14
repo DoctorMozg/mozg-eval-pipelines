@@ -217,6 +217,29 @@ class TestGradeStorage:
         results.ensure_workspace("b")
         assert results.list_grades("b", "r1") == {}
 
+    def test_regrade_replaces_named_grades_and_the_pass_flag(self, results: ResultStore) -> None:
+        kept = GradeResult(name="expect", verdict="pass")
+        results.add_run("local", run_record("r1"))
+        results.add_trial("local", trial_record("t1").model_copy(update={"passed": True}))
+        results.add_grades("local", "t1", [kept, GradeResult(name="judge", verdict="n/a")])
+
+        judged = GradeResult(name="judge", verdict="fail", detail="1. fail: 'twist'")
+        results.regrade("local", "t1", [judged], passed=False)
+
+        assert results.list_grades("local", "r1") == {"t1": [kept, judged]}
+        assert results.list_trials("local", "r1")[0].passed is False
+
+    def test_regrade_of_another_workspaces_trial_changes_nothing(
+        self, results: ResultStore
+    ) -> None:
+        results.ensure_workspace("b")
+        results.add_run("local", run_record("r1"))
+        results.add_trial("local", trial_record("t1"))
+
+        with pytest.raises(LookupError, match="t1"):
+            results.regrade("b", "t1", [GradeResult(name="judge", verdict="pass")], passed=True)
+        assert results.list_grades("local", "r1") == {}
+
 
 class TestSqlSchema:
     def test_migrations_match_the_tables_the_store_queries(self, tmp_path: Path) -> None:
