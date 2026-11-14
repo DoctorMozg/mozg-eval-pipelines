@@ -32,16 +32,33 @@ class Guard(Protocol):
         ...
 
 
-class CostGuard:
+class SpendCap:
+    """One spend cap for a whole run; trials running side by side all count into it."""
+
     def __init__(self, max_usd: float) -> None:
         self.max_usd = max_usd
         self.spent = 0.0
+        self.tripped = False
+
+    def add(self, usd: float) -> None:
+        self.spent += usd
+
+    def reached(self) -> bool:
+        return self.spent >= self.max_usd
+
+
+class CostGuard:
+    """Counts a trial's agent cost into the run's cap and stops the trial that crosses it."""
+
+    def __init__(self, cap: SpendCap) -> None:
+        self.cap = cap
 
     def check(self, payload: Payload) -> str | None:
         if isinstance(payload, Usage) and payload.cost_usd is not None:
-            self.spent += payload.cost_usd
-            if self.spent > self.max_usd:
-                return f"cost ${self.spent:.2f} is over the ${self.max_usd:.2f} cap"
+            self.cap.add(payload.cost_usd)
+            if self.cap.spent > self.cap.max_usd:
+                self.cap.tripped = True
+                return f"cost ${self.cap.spent:.2f} is over the ${self.cap.max_usd:.2f} cap"
         return None
 
 

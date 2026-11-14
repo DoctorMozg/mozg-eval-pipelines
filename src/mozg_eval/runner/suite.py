@@ -20,7 +20,7 @@ from mozg_eval.grading.support import DriverSupport
 from mozg_eval.judge.grading import TrialJudge, merged
 from mozg_eval.runner.checks import WorkspaceChecks, needs_workspace, snapshot
 from mozg_eval.runner.settings import resolve_settings
-from mozg_eval.runner.trial import TrialRunner, TurnGuard
+from mozg_eval.runner.trial import CostGuard, Guard, SpendCap, TrialRunner, TurnGuard
 from mozg_eval.spec.loader import CaseLoader
 from mozg_eval.spec.models import Case
 from mozg_eval.storage.base import ArtifactRef, RunRecord, TrialArm, TrialRecord, new_id
@@ -66,6 +66,15 @@ class RunOptions:
     ablation: bool = False
     select: CaseFilter = CaseFilter()
     jobs: int = 1  # trials that run side by side, each in its own temp HOME and workspace
+    max_cost_usd: float | None = None  # agent and judge spend; no trial starts once it is reached
+
+
+@dataclass(frozen=True)
+class PlannedTrial:
+    case_dir: Path
+    case: Case
+    arm: TrialArm
+    repeat: int
 
 
 @dataclass(frozen=True)
@@ -82,6 +91,8 @@ class SuiteResult:
     run: RunRecord
     trials: list[TrialSummary]
     skipped: dict[str, str] = field(default_factory=dict)  # case name -> why it didn't run
+    not_started: int = 0  # trials left out once the spend cap was reached
+    capped: bool = False  # the spend cap cancelled a trial or kept one from starting
 
 
 async def _file_chunks(path: Path) -> AsyncIterator[bytes]:
@@ -151,42 +162,46 @@ class SuiteRunner:
         run = RunRecord(id=new_id(), started_at=datetime.now(UTC), trigger="local")
         self.stores.results.add_run(self.ws, run)
         log.info("run %s: %d cases on %s", run.id, len(cases), self.driver_name)
-        result = SuiteResult(run, [])
-        planned: list[tuple[Path, Case, TrialArm, int]] = []
+        skipped: dict[str, str] = {}
+        planned: list[PlannedTrial] = []
         for case_dir, case in cases:
             if reason := self.support.skip_reason(case):
                 log.warning("skipping %s: %s", case.name, reason)
-                result.skipped[case.name] = reason
+                skipped[case.name] = reason
                 continue
             execution = case.execution.model_copy(update=self.overrides)
             for arm in self.arms(case, options.ablation):
                 planned += [
-                    (case_dir, case, arm, repeat) for repeat in range(1, execution.runs + 1)
+                    PlannedTrial(case_dir, case, arm, repeat)
+                    for repeat in range(1, execution.runs + 1)
                 ]
         slots = asyncio.Semaphore(options.jobs)
+        cap = None if options.max_cost_usd is None else SpendCap(options.max_cost_usd)
 
-        async def trial(case_dir: Path, case: Case, arm: TrialArm, repeat: int) -> TrialSummary:
+        async def trial(item: PlannedTrial) -> TrialSummary | None:
             async with slots:
-                return await self._trial(run, judge, case_dir, case, arm, repeat)
+                if cap is not None and cap.reached():
+                    return None
+                return await self._trial(run, judge, item, cap)
 
         # A task group cancels the trials still running when one fails, such as on a fixture error.
         try:
             async with asyncio.TaskGroup() as group:
-                tasks = [group.create_task(trial(*item)) for item in planned]
+                tasks = [group.create_task(trial(item)) for item in planned]
         except* FixtureError as failed:
             raise failed.exceptions[0] from None
-        result.trials.extend(task.result() for task in tasks)
-        return result
+        done = [task.result() for task in tasks]
+        trials = [summary for summary in done if summary is not None]
+        not_started = done.count(None)
+        capped = not_started > 0 or (cap is not None and cap.tripped)
+        if capped:
+            log.warning("spend cap reached: %d trials not started", not_started)
+        return SuiteResult(run, trials, skipped, not_started, capped)
 
     async def _trial(
-        self,
-        run: RunRecord,
-        judge: TrialJudge,
-        case_dir: Path,
-        case: Case,
-        arm: TrialArm,
-        repeat: int,
+        self, run: RunRecord, judge: TrialJudge, item: PlannedTrial, cap: SpendCap | None
     ) -> TrialSummary:
+        case_dir, case, arm, repeat = item.case_dir, item.case, item.arm, item.repeat
         execution = case.execution.model_copy(update=self.overrides)
         trial_id = new_id()
         # The temp dir holds the workspace and the HOME with linked credentials; both go with it.
@@ -212,12 +227,11 @@ class SuiteRunner:
                 append_system_prompt=execution.append_system_prompt,
                 limits=Limits(max_turns=execution.max_turns, timeout_s=execution.timeout_s),
             )
+            guards: list[Guard] = [TurnGuard(execution.max_turns)]
+            if cap is not None:
+                guards.append(CostGuard(cap))
             runner = TrialRunner(
-                self.ws,
-                run.id,
-                self.make_driver(home, raw_dir),
-                self.stores.events,
-                [TurnGuard(execution.max_turns)],
+                self.ws, run.id, self.make_driver(home, raw_dir), self.stores.events, guards
             )
             events = await runner.run(request, resolve_settings(case.execution, self.overrides))
             checks = WorkspaceChecks(workspace, before, check_env)
@@ -226,6 +240,8 @@ class SuiteRunner:
             for payload in post_run:
                 await runner.append(trial_id, payload)
             judged = await judge.grade(case, [e.payload for e in events], workspace)
+            if cap is not None:
+                cap.add(sum(spend.cost_usd or 0.0 for spend in judged.spend))
             for name in TRIAL_ARTIFACTS:
                 if (raw_dir / name).exists():
                     ref = ArtifactRef(run=run.id, trial=trial_id, name=name)

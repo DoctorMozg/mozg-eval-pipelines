@@ -165,6 +165,12 @@ def run(
     jobs: Annotated[
         int, typer.Option(min=1, max=16, help="Trials to run side by side; they share one login.")
     ] = 1,
+    max_cost_usd: Annotated[
+        float | None,
+        typer.Option(
+            min=0.0, help="Agent and judge spend after which no trial starts; exit 2 if reached."
+        ),
+    ] = None,
     push: Annotated[
         bool,
         typer.Option(
@@ -174,8 +180,8 @@ def run(
 ) -> None:
     """Run and grade cases on one agent.
 
-    Exit 0 when every case meets the threshold, 1 when one doesn't, 2 when a trial errored,
-    130 when interrupted.
+    Exit 0 when every case meets the threshold, 1 when one doesn't, 2 when a trial errored
+    or the spend cap stopped the run, 130 when interrupted.
     With --ablation only the with-bundle arm counts toward the threshold. A failed --push
     never changes the exit code; `mzeval push RUN` retries it.
     """
@@ -205,7 +211,8 @@ def run(
     )
     try:
         select = CaseFilter(tuple(case or ()), tuple(tag or ()))
-        result = asyncio.run(suite.run(files, RunOptions(ablation, select, jobs)))
+        options = RunOptions(ablation, select, jobs, max_cost_usd)
+        result = asyncio.run(suite.run(files, options))
     except JudgeSetupError as exc:
         typer.echo(f"judge: {exc}", err=True)
         raise typer.Exit(2) from exc
@@ -263,6 +270,11 @@ def run(
     )
     if target is not None and not _push_run(target, record.id):
         typer.echo(f"retry with: mzeval push {record.id}", err=True)
+    if result.capped:
+        typer.echo(
+            f"spend cap ${max_cost_usd} reached: {result.not_started} trials not started", err=True
+        )
+        raise typer.Exit(2)
     if any(trial.record.status in ("error", "timeout") for trial in trials):
         raise typer.Exit(2)
     if stats.failing():

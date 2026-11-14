@@ -9,12 +9,14 @@ from pydantic_ai.models.function import FunctionModel
 from typer.testing import CliRunner
 
 from mozg_eval.cli import app
+from mozg_eval.drivers.claude import ClaudeDriver
 from mozg_eval.events.models import CheckResult, End, Event
+from mozg_eval.grading.support import DriverSupport
 from mozg_eval.judge.cache import JudgeCache
 from mozg_eval.judge.grading import TrialJudge
 from mozg_eval.judge.verdict import CriterionJudge
 from mozg_eval.runner.rejudge import Rejudger
-from mozg_eval.runner.suite import SuiteRunner
+from mozg_eval.runner.suite import RunOptions, SuiteRunner
 from mozg_eval.spec.loader import CaseLoader
 from mozg_eval.storage.base import ArtifactRef
 from mozg_eval.storage.config import StorageConfig, open_stores
@@ -401,6 +403,60 @@ class TestJobs:
         assert result.output.index("remember-decision #1") < result.output.index(
             "remember-decision #2"
         )
+
+
+class TestSpendCap:
+    # The replayed run reports $0.00396366, so a cap of $0.005 lets one trial finish under it.
+    def test_trial_that_crosses_the_cap_is_cancelled_and_the_rest_never_start(
+        self, suite: Path, fake_claude: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        spans = tmp_path / "spans.txt"
+        monkeypatch.setenv("FAKE_SPANS", str(spans))
+        argv = ["run", str(suite), "--runs", "3", "--executable", str(fake_claude)]
+
+        result = CliRunner().invoke(app, [*argv, "--max-cost-usd", "0.005"])
+
+        assert result.exit_code == 2, result.output
+        assert len(spans.read_text().splitlines()) == 2
+        assert "remember-decision #2: cancelled" in result.output
+        assert "spend cap $0.005 reached: 1 trials not started" in result.output
+
+    def test_run_under_the_cap_is_graded_as_usual(self, suite: Path, fake_claude: Path) -> None:
+        argv = ["run", str(suite), "--executable", str(fake_claude), "--max-cost-usd", "1"]
+
+        result = CliRunner().invoke(app, argv)
+
+        assert result.exit_code == 0, result.output
+        assert "spend cap" not in result.output
+
+    def test_judge_spend_counts_toward_the_cap(
+        self,
+        suite: Path,
+        fake_claude: Path,
+        tmp_path: Path,
+        quoting_judge: Callable[..., FunctionModel],
+    ) -> None:
+        case = suite / "case.mzeval.yaml"
+        case.write_text(
+            case.read_text() + "graders:\n  - {name: ok, type: judge, checklist: [fine]}\n"
+        )
+        priced = quoting_judge("pass", model_name="claude-haiku-4-5")
+        stores = open_stores(StorageConfig.load(tmp_path, env={}))
+        runner = SuiteRunner(
+            stores,
+            DriverSupport("claude", ClaudeDriver.capabilities),
+            lambda home, raw: ClaudeDriver(home, raw, executable=str(fake_claude)),
+            "local",
+            {},
+            lambda _: TrialJudge(CriterionJudge(priced, JudgeCache(tmp_path / "jc")), {}),
+        )
+        # Just above one trial's agent cost: only the judge's spend can reach the cap.
+        options = RunOptions(max_cost_usd=0.00396367)
+
+        result = asyncio.run(runner.run([case], options))
+
+        stores.results.close()
+        assert (len(result.trials), result.not_started, result.capped) == (1, 1, True)
 
 
 class TestPlanCommand:

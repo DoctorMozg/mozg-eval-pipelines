@@ -19,7 +19,14 @@ from mozg_eval.events.models import (
     Usage,
 )
 from mozg_eval.runner.settings import resolve_settings
-from mozg_eval.runner.trial import CostGuard, ForbiddenToolGuard, Guard, TrialRunner, TurnGuard
+from mozg_eval.runner.trial import (
+    CostGuard,
+    ForbiddenToolGuard,
+    Guard,
+    SpendCap,
+    TrialRunner,
+    TurnGuard,
+)
 from mozg_eval.spec.models import Execution
 from mozg_eval.storage.disk import DiskEventStore
 
@@ -81,7 +88,7 @@ class TestTrialRunner:
         assert (tmp_path / "raw" / "raw.jsonl").read_text().count("\n") == 17
 
     def test_cost_guard_cancels_mid_run(self, trial: Trial) -> None:
-        events = trial("ok", CostGuard(0.25))
+        events = trial("ok", CostGuard(SpendCap(0.25)))
 
         assert end_of(events).status == "cancelled"
         assert "over the $0.25 cap" in end_of(events).reason
@@ -90,10 +97,10 @@ class TestTrialRunner:
     def test_replayed_log_trips_the_guard_at_the_same_event(
         self, trial: Trial, tmp_path: Path
     ) -> None:
-        live = trial("ok", CostGuard(0.25))
+        live = trial("ok", CostGuard(SpendCap(0.25)))
         tripped_live = max(e.seq for e in live if isinstance(e.payload, Usage))
 
-        guard = CostGuard(0.25)
+        guard = CostGuard(SpendCap(0.25))
         replayed = stored(tmp_path)
         tripped = next(e.seq for e in replayed if guard.check(e.payload))
 
@@ -112,7 +119,7 @@ class TestTrialRunner:
         monkeypatch.setattr(process, "CANCEL_GRACE_S", 0.2)
         began = time.monotonic()
 
-        events = trial("stubborn", CostGuard(0.25))
+        events = trial("stubborn", CostGuard(SpendCap(0.25)))
 
         assert time.monotonic() - began < 5
         assert end_of(events).status == "cancelled"
