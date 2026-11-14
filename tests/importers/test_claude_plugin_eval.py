@@ -283,15 +283,31 @@ class TestGraders:
             "path_match": '^[^"]*/spec\\.md$',
         }
 
-    def test_llm_criteria_become_one_flagged_judge_item(self, convert: Convert) -> None:
+    def test_llm_criteria_become_one_flagged_judge_item_on_the_last_reply(
+        self, convert: Convert
+    ) -> None:
         grader = {"name": "j", "type": "llm", "criteria": "PASS if polite.\n", "weight": 2}
 
         result = convert(case_11([grader], tags=["trap"]))
 
         assert result.case["graders"] == [
-            {"name": "j", "type": "judge", "checklist": ["PASS if polite."], "weight": 2}
+            {
+                "name": "j",
+                "type": "judge",
+                "checklist": ["PASS if polite."],
+                "focus": "final",
+                "weight": 2,
+            }
         ]
         assert len(result.flags) == 1
+
+    def test_llm_focus_on_a_file_is_kept(self, convert: Convert) -> None:
+        focus = {"source": "file", "path": "listing.md"}
+        grader = {"name": "j", "type": "llm", "criteria": "PASS if polite.", "focus": focus}
+
+        [converted] = convert(case_11([grader], tags=["trap"])).case["graders"]
+
+        assert converted["focus"] == {"file": "listing.md"}
 
     def test_unknown_tool_is_an_error(self, convert: Convert) -> None:
         data = case_11([routing("fires", "render")], tags=["fire"])

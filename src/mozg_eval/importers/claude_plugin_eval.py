@@ -402,8 +402,8 @@ class _CaseConverter:
         self._note(f"{grader['type']} -> judge")
         self._flag(grader["name"], "criteria imported as one checklist item; split it by hand")
         converted: dict[str, Any] = {"type": "judge", "checklist": [grader["criteria"].strip()]}
-        if "focus" in grader:
-            converted["focus"] = self._target(grader["focus"])
+        # 1.1 documents no focus default for llm; last_message is the only default it states.
+        converted["focus"] = self._target(grader["focus"]) if "focus" in grader else "final"
         if grader["type"] == "baseline":
             converted["baseline"] = grader["baseline_file"]
         return converted
