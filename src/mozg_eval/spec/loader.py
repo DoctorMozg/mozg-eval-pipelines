@@ -56,8 +56,23 @@ class CaseLoader:
         except ValidationError as exc:
             issues = [self._issue(path, error, lines) for error in exc.errors()]
             raise CaseLoadError(sorted(issues, key=lambda issue: issue.line)) from exc
+        if missing := self._missing_paths(path, case, lines):
+            raise CaseLoadError(missing)
         log.debug("loaded case %s from %s", case.name, path)
         return case
+
+    @staticmethod
+    def _missing_paths(path: Path, case: Case, lines: dict[Loc, int]) -> list[SpecIssue]:
+        """Bundles and the fixture resolve against the case folder, so a typo fails at load."""
+        issues: list[SpecIssue] = []
+        for index, bundle in enumerate(case.bundle):
+            if not (path.parent / bundle).is_dir():
+                message = f"bundle {bundle}: no such directory next to the case"
+                issues.append(SpecIssue(path, lines.get(("bundle", index), 1), message))
+        if case.fixture and not (path.parent / case.fixture).is_file():
+            message = f"fixture {case.fixture}: no such file next to the case"
+            issues.append(SpecIssue(path, lines.get(("fixture",), 1), message))
+        return issues
 
     @staticmethod
     def discover(roots: Sequence[Path]) -> list[Path]:

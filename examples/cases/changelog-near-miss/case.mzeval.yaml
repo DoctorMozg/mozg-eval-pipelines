@@ -1,0 +1,19 @@
+schema: mzeval/2
+name: changelog-near-miss
+description: Asking whether a version can ship belongs to release-check, even though it mentions the changelog.
+kind: near-miss
+tags: [routing, negative]
+expect:
+  skill: { not: changelog-entry, owner: release-check }
+bundle: [../../plugins/changelog]
+execution:
+  prompt: Can I tag 1.4.0 today, or is the changelog still missing something?
+  tools: [skill]
+  max_turns: 8
+  timeout_s: 240
+graders:
+  - name: gives-a-verdict
+    type: judge
+    checklist:
+      - Says whether 1.4.0 is ready to tag, or names what is missing before it is
+drivers: { exclude: [pi] }

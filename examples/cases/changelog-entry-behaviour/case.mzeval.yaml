@@ -1,0 +1,35 @@
+schema: mzeval/2
+name: changelog-entry-behaviour
+description: changelog-entry reads the file first and adds one bullet under Unreleased, leaving 1.3.0 alone.
+kind: behaviour
+tags: [behaviour]
+bundle: [../../plugins/changelog]
+fixture: fixture.sh
+execution:
+  prompt: Log the fix for the double discount on repeat customers in the changelog.
+  tools: [skill, read, edit, write, glob, grep, shell]
+  max_turns: 12
+  timeout_s: 300
+graders:
+  - name: changelog-entry-fires
+    type: skill
+    skill: changelog-entry
+  - name: reads-before-editing
+    type: tool_order
+    sequence:
+      - { kind: read, match: 'CHANGELOG\.md' }
+      - { kind: edit, match: 'CHANGELOG\.md' }
+  - name: entry-mentions-the-fix
+    type: regex
+    pattern: '## Unreleased\s+- [^\n]*discount'
+    flags: i
+    target: { file: CHANGELOG.md }
+  - name: no-edit-outside-workspace
+    type: tool_called
+    kind: edit
+    path_match: '^/(?!tmp/)'
+    min: 0
+    max: 0
+  - name: release-section-untouched
+    type: command
+    run: grep -A2 '^## 1.3.0' CHANGELOG.md | grep -q 'Added the `--junit` flag.'

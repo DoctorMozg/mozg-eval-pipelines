@@ -157,3 +157,25 @@ class TestErrors:
         assert issues_of(loader, path) == [
             f"{path}:1: this is a claude plugin eval 1.1 case; convert it with `mzeval import`"
         ]
+
+
+class TestReferencedPaths:
+    def test_missing_bundle_and_fixture_are_reported_with_their_lines(
+        self, loader: CaseLoader, write_case: WriteCase
+    ) -> None:
+        path = write_case(VALID + "bundle: [plugins/present, plugins/absent]\nfixture: seed.sh\n")
+        (path.parent / "plugins" / "present").mkdir(parents=True)
+
+        assert issues_of(loader, path) == [
+            f"{path}:8: bundle plugins/absent: no such directory next to the case",
+            f"{path}:9: fixture seed.sh: no such file next to the case",
+        ]
+
+    def test_existing_bundle_and_fixture_load(
+        self, loader: CaseLoader, write_case: WriteCase
+    ) -> None:
+        path = write_case(VALID + "bundle: [plugin]\nfixture: seed.sh\n")
+        (path.parent / "plugin").mkdir()
+        (path.parent / "seed.sh").write_text("touch seeded\n")
+
+        assert loader.load(path).bundle == ["plugin"]

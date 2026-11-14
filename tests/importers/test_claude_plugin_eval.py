@@ -343,6 +343,11 @@ class TestCaseFields:
 
 
 class TestImportTree:
+    @pytest.fixture(autouse=True)
+    def plugin(self, tmp_path: Path) -> None:
+        """The bundle that case_11's `../../plugins/p` names, so written cases load."""
+        (tmp_path / "evals" / "plugins" / "p").mkdir(parents=True)
+
     def test_writes_loadable_cases_next_to_the_originals(
         self, importer: ClaudePluginEvalImporter, convert: Convert, tmp_path: Path
     ) -> None:

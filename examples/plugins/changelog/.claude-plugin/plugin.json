@@ -1,0 +1,5 @@
+{
+  "name": "changelog",
+  "version": "0.1.0",
+  "description": "Example plugin for the mozg-eval cases in examples/cases: keeps CHANGELOG.md and checks a release before it is tagged."
+}

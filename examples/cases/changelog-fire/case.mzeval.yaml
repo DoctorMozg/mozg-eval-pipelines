@@ -1,0 +1,13 @@
+schema: mzeval/2
+name: changelog-fire
+description: A plain request to record a fix routes to changelog-entry.
+kind: fire
+tags: [routing, positive]
+expect:
+  skill: changelog-entry
+bundle: [../../plugins/changelog]
+execution:
+  prompt: Put the fix for the double discount on repeat customers in the changelog.
+  tools: [skill]
+  max_turns: 2
+  timeout_s: 180
