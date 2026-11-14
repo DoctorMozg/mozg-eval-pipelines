@@ -246,6 +246,33 @@ class TestRunCommand:
         assert not (tmp_path / "record.json").exists()
 
 
+class TestPlanCommand:
+    def test_estimate_comes_from_stored_runs_and_spends_nothing(
+        self, suite: Path, fake_claude: Path, tmp_path: Path
+    ) -> None:
+        before = CliRunner().invoke(app, ["plan", str(suite)])
+        CliRunner().invoke(app, ["run", str(suite), "--executable", str(fake_claude)])
+        (tmp_path / "record.json").unlink()
+
+        after = CliRunner().invoke(app, ["plan", str(suite), "--runs", "3"])
+
+        assert before.exit_code == 0, before.output
+        assert "remember-decision: 2 trials, no stored cost" in before.output
+        assert "plan: 1 cases, 2 trials, no stored cost to estimate from" in before.output
+        assert "remember-decision: 3 trials x $0.0040 = $0.0119" in after.output
+        assert "plan: 1 cases, 3 trials, estimated $0.0119" in after.output
+        assert not (tmp_path / "record.json").exists()
+
+    def test_invalid_case_exits_2(self, suite: Path) -> None:
+        case = suite / "case.mzeval.yaml"
+        case.write_text(case.read_text() + "surprise: 1\n")
+
+        result = CliRunner().invoke(app, ["plan", str(suite)])
+
+        assert result.exit_code == 2
+        assert "surprise" in result.output
+
+
 class TestAblation:
     @pytest.fixture
     def plugin_case(self, suite: Path, tmp_path: Path) -> Path:

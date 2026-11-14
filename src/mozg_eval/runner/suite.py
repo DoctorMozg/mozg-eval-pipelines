@@ -91,24 +91,6 @@ class SuiteRunner:
         self.overrides = overrides
         self.make_judge = make_judge
 
-    def runnable(self, case: Case) -> str | None:
-        """Return why the case can't run on this driver yet, or None."""
-        drivers = case.drivers
-        if (drivers.only is not None and self.driver_name not in drivers.only) or (
-            self.driver_name in drivers.exclude
-        ):
-            return f"case excludes driver {self.driver_name}"
-        if case.history_file or case.add_dirs:
-            return "history_file and add_dirs are not supported yet"
-        tools = case.execution.tools
-        if not self.support.capabilities.host_shell and (not tools or "shell" in tools):
-            # An empty tool list means the agent's defaults, which include its shell.
-            return f"{self.driver_name} has no sandbox; cases with shell wait for Docker isolation"
-        if not self.support.applicable(case):
-            # Every grade would be n/a, so the trial could only pass vacuously.
-            return f"nothing to grade on {self.driver_name}: {'; '.join(self.support.gaps(case))}"
-        return None
-
     @staticmethod
     def arms(case: Case, ablation: bool) -> list[TrialArm]:
         """The without arm runs only when the case loads a bundle and grades it in both arms."""
@@ -130,7 +112,7 @@ class SuiteRunner:
         log.info("run %s: %d cases on %s", run.id, len(cases), self.driver_name)
         summaries = []
         for case_dir, case in cases:
-            if reason := self.runnable(case):
+            if reason := self.support.skip_reason(case):
                 log.warning("skipping %s: %s", case.name, reason)
                 continue
             execution = case.execution.model_copy(update=self.overrides)

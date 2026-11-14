@@ -25,6 +25,7 @@ from mozg_eval.importers.claude_plugin_eval import (
 from mozg_eval.judge.cache import JudgeCache
 from mozg_eval.judge.grading import JudgeSetupError, TrialJudge
 from mozg_eval.report.html import ReportBuilder
+from mozg_eval.runner.plan import CostHistory, Planner
 from mozg_eval.runner.rejudge import Rejudger
 from mozg_eval.runner.suite import FixtureError, SuiteRunner, TrialSummary
 from mozg_eval.spec.loader import CASE_FILENAME, CaseLoader, CaseLoadError
@@ -286,6 +287,42 @@ def rejudge(
                 typer.echo(f"    {grade.name}: {grade.verdict}, {grade.detail}")
     _echo_spend(trials, agents=False)
     typer.echo(f"run {run_id}: rejudged {len(trials)} trials")
+
+
+@app.command()
+def plan(
+    paths: Annotated[
+        list[Path],
+        typer.Argument(
+            exists=True, help=f"Case files, or directories to search for {CASE_FILENAME}."
+        ),
+    ],
+    runs: Annotated[int | None, typer.Option(min=1, help="Repeats per case.")] = None,
+    driver: Annotated[DriverName, typer.Option(help="The agent to plan for.")] = DriverName.claude,
+    ablation: Annotated[
+        bool, typer.Option(help="Plan the without-bundle arm too, as run --ablation would.")
+    ] = False,
+) -> None:
+    """Validate cases and estimate a run's cost from stored runs; no agent starts."""
+    files = CaseLoader.discover(paths)
+    if not files:
+        typer.echo(f"no {CASE_FILENAME} found under: {', '.join(map(str, paths))}", err=True)
+        raise typer.Exit(2)
+    loader = CaseLoader()
+    try:
+        cases = [loader.load(path) for path in files]
+    except CaseLoadError as exc:
+        for issue in exc.issues:
+            typer.echo(str(issue), err=True)
+        raise typer.Exit(2) from exc
+    stores = open_stores(StorageConfig.load(Path.cwd()))
+    try:
+        history = CostHistory.load(stores.results, DEFAULT_WORKSPACE, driver.value)
+    finally:
+        stores.results.close()
+    planner = Planner(DriverSupport(driver.value, DRIVERS[driver].capabilities), history)
+    for line in Planner.summary(planner.estimate(cases, runs, ablation)):
+        typer.echo(line)
 
 
 @app.command()

@@ -46,6 +46,24 @@ class DriverSupport:
                         return gap
         return None
 
+    def skip_reason(self, case: Case) -> str | None:
+        """Why the case can't run on this driver yet, or None."""
+        drivers = case.drivers
+        if (drivers.only is not None and self.driver not in drivers.only) or (
+            self.driver in drivers.exclude
+        ):
+            return f"case excludes driver {self.driver}"
+        if case.history_file or case.add_dirs:
+            return "history_file and add_dirs are not supported yet"
+        tools = case.execution.tools
+        if not self.capabilities.host_shell and (not tools or "shell" in tools):
+            # An empty tool list means the agent's defaults, which include its shell.
+            return f"{self.driver} has no sandbox; cases with shell wait for Docker isolation"
+        if not self.applicable(case):
+            # Every grade would be n/a, so the trial could only pass vacuously.
+            return f"nothing to grade on {self.driver}: {'; '.join(self.gaps(case))}"
+        return None
+
     def applicable(self, case: Case) -> bool:
         """Whether the driver can answer at least one of the case's assertions."""
         has_expect = case.expect.skill is not None and self.expect_gap(case) is None
