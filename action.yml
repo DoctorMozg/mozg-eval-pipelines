@@ -1,0 +1,100 @@
+name: mzeval
+description: Run mozg-eval cases on a coding agent, gate on a pass-rate threshold and upload JUnit.
+branding:
+  icon: check-circle
+  color: blue
+
+inputs:
+  paths:
+    description: Case files or directories, one per line.
+    required: true
+  driver:
+    description: The agent to run (claude, codex, opencode, pi).
+    default: claude
+  threshold:
+    description: Pass rate each case needs, from 0.01 to 1.0.
+    default: "1.0"
+  runs:
+    description: Repeats per case; empty keeps each case's own value.
+    default: ""
+  model:
+    description: Model for every case; empty keeps each case's own value.
+    default: ""
+  judge:
+    description: Default judge model, e.g. anthropic:claude-sonnet-5-5.
+    default: ""
+  ablation:
+    description: Also run each case without its bundle and report the paired delta.
+    default: "false"
+  executable:
+    description: The agent's executable; empty uses the driver name from PATH.
+    default: ""
+  push:
+    description: Upload the run to MZEVAL_SERVER with MZEVAL_TOKEN (set them as env).
+    default: "false"
+  junit-file:
+    description: Where the JUnit report is written.
+    default: mzeval-junit.xml
+  artifact-name:
+    description: Name of the uploaded JUnit artifact.
+    default: mzeval-junit
+
+outputs:
+  exit-code:
+    description: The exit code of mzeval run (0 pass, 1 below threshold, 2 error).
+    value: ${{ steps.run.outputs.exit-code }}
+  junit-file:
+    description: Path of the JUnit report.
+    value: ${{ inputs.junit-file }}
+
+runs:
+  using: composite
+  steps:
+    - uses: astral-sh/setup-uv@v10.3.3
+
+    - id: run
+      shell: bash
+      env:
+        CASE_PATHS: ${{ inputs.paths }}
+        DRIVER: ${{ inputs.driver }}
+        THRESHOLD: ${{ inputs.threshold }}
+        RUNS: ${{ inputs.runs }}
+        MODEL: ${{ inputs.model }}
+        JUDGE: ${{ inputs.judge }}
+        ABLATION: ${{ inputs.ablation }}
+        EXECUTABLE: ${{ inputs.executable }}
+        PUSH: ${{ inputs.push }}
+        JUNIT: ${{ inputs.junit-file }}
+      run: |
+        # Inputs arrive as env vars and go into an argv array, so no input is parsed as shell.
+        mapfile -t paths < <(printf '%s\n' "$CASE_PATHS" | sed '/^[[:space:]]*$/d')
+        args=(run "${paths[@]}" --driver "$DRIVER" --threshold "$THRESHOLD" --junit "$JUNIT")
+        [ -n "$RUNS" ] && args+=(--runs "$RUNS")
+        [ -n "$MODEL" ] && args+=(--model "$MODEL")
+        [ -n "$JUDGE" ] && args+=(--judge "$JUDGE")
+        [ -n "$EXECUTABLE" ] && args+=(--executable "$EXECUTABLE")
+        [ "$ABLATION" = "true" ] && args+=(--ablation)
+        [ "$PUSH" = "true" ] && args+=(--push)
+        set +e
+        uv run --project "$GITHUB_ACTION_PATH" --frozen --no-dev mzeval "${args[@]}" 2>&1 | tee mzeval-output.txt
+        code=${PIPESTATUS[0]}
+        set -e
+        echo "exit-code=$code" >> "$GITHUB_OUTPUT"
+        {
+          echo "### mzeval on $DRIVER: exit $code"
+          echo '```'
+          tail -c 60000 mzeval-output.txt
+          echo '```'
+        } >> "$GITHUB_STEP_SUMMARY"
+
+    - if: ${{ !cancelled() }}
+      uses: actions/upload-artifact@v7
+      with:
+        name: ${{ inputs.artifact-name }}
+        path: ${{ inputs.junit-file }}
+        if-no-files-found: warn
+
+    - shell: bash
+      env:
+        CODE: ${{ steps.run.outputs.exit-code }}
+      run: exit "${CODE:-2}"

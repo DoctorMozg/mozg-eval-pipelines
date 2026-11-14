@@ -1,0 +1,52 @@
+name: action
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  self-test:
+    runs-on: ubuntu-latest
+    env:
+      # The fake claude replays this recorded run, so the test spends nothing.
+      FAKE_FIXTURE: ${{ github.workspace }}/tests/drivers/fixtures/claude_skill_fire.jsonl
+      FAKE_RECORD: ${{ github.workspace }}/fake-record.json
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Stand in a fake claude
+        run: |
+          printf '#!/bin/sh\nexec python3 "%s/tests/drivers/fake_claude.py" "$@"\n' \
+            "$GITHUB_WORKSPACE" > "$RUNNER_TEMP/claude"
+          chmod +x "$RUNNER_TEMP/claude"
+
+      - id: passing
+        uses: ./
+        with:
+          paths: tests/action-smoke
+          executable: ${{ runner.temp }}/claude
+          junit-file: junit-passing.xml
+          artifact-name: junit-passing
+
+      - name: Seed a regression
+        run: >
+          sed -i 's/skill: memory-note/skill: other-skill/'
+          tests/action-smoke/memory-note-fire/case.mzeval.yaml
+
+      - id: regressed
+        uses: ./
+        continue-on-error: true
+        with:
+          paths: tests/action-smoke
+          executable: ${{ runner.temp }}/claude
+          junit-file: junit-regressed.xml
+          artifact-name: junit-regressed
+
+      - name: The regression fails the action and shows in JUnit
+        env:
+          OUTCOME: ${{ steps.regressed.outcome }}
+        run: |
+          test "$OUTCOME" = failure
+          grep -q 'failures="1"' junit-regressed.xml
+          grep -q 'failures="0"' junit-passing.xml

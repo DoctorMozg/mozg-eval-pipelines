@@ -1,0 +1,11 @@
+schema: mzeval/2
+name: memory-note-fire
+description: The action self-test replays a recorded Claude run that fires memory-note.
+kind: fire
+expect:
+  skill: memory-note
+bundle: [../plugin]
+execution:
+  prompt: Remember this decision.
+  tools: [skill]
+  runs: 1
