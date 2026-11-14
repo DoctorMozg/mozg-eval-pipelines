@@ -1,6 +1,8 @@
 # mozg-eval: proposal
 
-Status: draft for review, revision 5, 2026-11-14. Nothing is built yet.
+Status: revision 5, 2026-11-14. Phase A (§8 milestones 01 to 14) is built, apart from milestone 09
+(deferred) and `renormalize`; the "As built" notes record where the code differs from the plan.
+Phase B and C are not built.
 
 Revision 2 added the connector model (drivers and sources), streaming event logs, a storage layer
 that can move from SQLite to Postgres, a single-user server for trends, and a runner agent. It also
@@ -518,9 +520,9 @@ drill-down, and Vega-Lite does brushing. Revisit only if the UI needs real clien
 | `mzeval plan <suite>`                                      | validate cases and estimate cost from past runs, no tokens spent                                            |
 | `mzeval compare <run> [<baseline-run>]`                    | paired per-case score delta with its CI: a run's with/without arms, or a run against a baseline run         |
 | `mzeval push <run-id>`                                     | upload a stored run (retry after a failed `--push`)                                                         |
-| `mzeval ingest <file> --format ...`                        | import external traces as a source run                                                                      |
-| `mzeval rejudge / renormalize <run>`                       | regrade or re-parse stored runs at no agent cost                                                            |
-| `mzeval serve`                                             | the server (also the Docker entrypoint)                                                                     |
+| `mzeval ingest <file> --format ...`                        | import external traces as a source run (phase C)                                                            |
+| `mzeval rejudge / renormalize <run>`                       | regrade or re-parse stored runs at no agent cost (`renormalize` is not built yet)                           |
+| `mzeval serve`                                             | the server, also the Docker entrypoint (phase B)                                                            |
 | `mzeval remote run <suite>`                                | ask the server to dispatch the suite's CI workflow, same as the Run button (phase C)                        |
 
 Server URL and token come from `MZEVAL_SERVER` and `MZEVAL_TOKEN`. In CI the eval result alone
@@ -536,7 +538,7 @@ As built (milestone 14):
   spend), `POST …/trials/{trial}/events` (the server skips a resent `(trial, seq)`) and
   `PUT …/trials/{trial}/artifacts/{name}`. The HTTP client is `httpx2`, which the judge SDKs
   already bring in, not `httpx`.
-- The action is `action.yml` at the repo root (`uses: DoctorMozg/mozg-eval-pipelines@v0`). It
+- The action is `action.yml` at the repo root (`uses: DoctorMozg/mozg-eval-pipelines@main` until the first `v*` tag). It
   writes the output to the job summary, which needs no `checks: write` and so also works on PRs
   from forks, and uploads the JUnit file. Its self-test replays a recorded run through the fake
   `claude`, then seeds a regression and asserts that the action fails.

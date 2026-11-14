@@ -76,24 +76,28 @@ The release workflow builds offline single-file binaries with PyApp (Python and 
 
 ## Case format
 
-A case is strict YAML: an unknown key fails the load with the file and line. `kind` is one of `fire | near-miss | gate | behaviour | trap`. A near-miss asserts the opposite of a fire:
+A case is strict YAML: an unknown key fails the load with the file and line, and so does a `bundle` directory or `fixture` file that doesn't exist next to the case. `kind` is one of `fire | near-miss | gate | behaviour | trap`. A near-miss asserts the opposite of a fire. From [examples/cases](examples/cases), which run against the small plugin in [examples/plugins/changelog](examples/plugins/changelog):
 
 ```yaml
 schema: mzeval/2
-name: render-near-miss
+name: changelog-near-miss
+description: Asking whether a version can ship belongs to release-check, even though it mentions the changelog.
 kind: near-miss
+tags: [routing, negative]
 expect:
-  skill: { not: resolve-render, owner: resolve-verify }
-bundle: [../../plugins/davinci-resolve]
+  skill: { not: changelog-entry, owner: release-check }
+bundle: [../../plugins/changelog]
 execution:
-  prompt: Check that the exported master plays back.
+  prompt: Can I tag 1.4.0 today, or is the changelog still missing something?
   tools: [skill]
   max_turns: 8
+  timeout_s: 240
 graders:
-  - type: judge
-    name: says-ffprobe
+  - name: gives-a-verdict
+    type: judge
     checklist:
-      - Says the file must be checked with ffprobe before upload
+      - Says whether 1.4.0 is ready to tag, or names what is missing before it is
+drivers: { exclude: [pi] }
 ```
 
 - `expect.skill` is graded as labelled routing data. It feeds per-skill precision, recall and the confusion matrix.
@@ -173,7 +177,7 @@ Comparisons are paired per case. One run per case gets an exact McNemar test. Se
 
 Inputs: `paths` (required, one per line), `driver`, `threshold`, `runs`, `model`, `judge`, `ablation`, `executable`, `push`, `junit-file` (default `mzeval-junit.xml`) and `artifact-name`. Outputs: `exit-code` and `junit-file`. The action writes the run output to the job summary, uploads the JUnit file as an artifact and exits with the run's code. The self-test in `.github/workflows/action.yml` replays a recorded run through the fake `claude`, seeds a regression and asserts the action fails.
 
-`run --junit FILE` writes one testcase per case, so a JUnit reporter agrees with the exit code: `<error>` when a run errored or timed out, `<failure>` below the threshold, `<skipped>` with the reason. Exit codes: 0 every case meets the threshold, 1 a case doesn't, 2 a trial errored.
+`run --junit FILE` writes one testcase per case, so a JUnit reporter agrees with the exit code: `<error>` when a run errored or timed out, `<failure>` below the threshold, `<skipped>` with the reason. Exit codes: 0 every case meets the threshold, 1 a case doesn't, 2 a trial errored or the setup failed, 130 interrupted.
 
 Use API keys in CI. A `claude setup-token` token in `CLAUDE_CODE_OAUTH_TOKEN` works, but Anthropic's terms point automated use at API keys.
 

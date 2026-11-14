@@ -5,6 +5,8 @@ dist/
 .pytest_cache/
 .ruff_cache/
 .mz/
+# mzeval run results in the working directory
+.mzeval/
 .idea/
 .vscode/
 
