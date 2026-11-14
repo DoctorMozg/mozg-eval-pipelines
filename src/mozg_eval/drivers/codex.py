@@ -14,7 +14,7 @@ from pydantic import BaseModel, JsonValue, ValidationError
 from mozg_eval.drivers import process
 from mozg_eval.drivers.codex_plugins import MARKETPLACE, CodexMarketplace, PluginRenderError
 from mozg_eval.drivers.process import ChildProcess
-from mozg_eval.drivers.protocol import TrialRequest
+from mozg_eval.drivers.protocol import Capabilities, TrialRequest
 from mozg_eval.events.models import (
     End,
     Error,
@@ -254,6 +254,16 @@ def isolated_env(base: Mapping[str, str], home: Path, real_home: Path) -> dict[s
 
 class CodexDriver:
     name = "codex"
+    # Reads of files go through the shell, and spawn_agent names no agent.
+    capabilities = Capabilities(
+        skills="inferred",
+        subagents="none",
+        hooks="native",
+        usage="tokens",
+        isolation="home",
+        tools=["shell", "edit", "subagent"],
+        tool_input=["shell"],
+    )
 
     def __init__(self, home: Path, raw_dir: Path, executable: str = "codex") -> None:
         self.home = home

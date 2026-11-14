@@ -170,3 +170,22 @@ class TestRunCommand:
         (trial,) = stores.results.list_trials("local", run.id)
         stores.results.close()
         assert trial.driver == "codex"
+
+    def test_case_with_nothing_codex_can_grade_is_skipped(
+        self, suite: Path, fake_codex: Path, tmp_path: Path
+    ) -> None:
+        case = suite / "case.mzeval.yaml"
+        case.write_text(
+            case.read_text().replace(
+                "kind: fire\nexpect:\n  skill: memory-note\n", "kind: behaviour\n"
+            )
+            + "graders:\n  - {name: spawned, type: subagent, subagent: researcher}\n"
+        )
+
+        result = CliRunner().invoke(
+            app, ["run", str(suite), "--driver", "codex", "--executable", str(fake_codex)]
+        )
+
+        assert result.exit_code == 0, result.output
+        assert "0 trials" in result.output
+        assert not (tmp_path / "record.json").exists()

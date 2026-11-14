@@ -4,7 +4,9 @@ from typing import Any
 
 import pytest
 
-from mozg_eval.drivers.claude import StreamLine, normalize
+from mozg_eval.drivers.claude import ClaudeDriver, StreamLine, normalize
+from mozg_eval.drivers.codex import CodexDriver
+from mozg_eval.drivers.protocol import Capabilities
 from mozg_eval.events.models import (
     CheckResult,
     End,
@@ -18,10 +20,13 @@ from mozg_eval.events.models import (
 )
 from mozg_eval.grading.graders import TrialGrader
 from mozg_eval.grading.models import GradeResult, Verdict
+from mozg_eval.grading.support import DriverSupport
 from mozg_eval.spec.models import Case
 
 SKILL_FIRE = Path(__file__).parents[1] / "drivers" / "fixtures" / "claude_skill_fire.jsonl"
 T0 = datetime(2026, 11, 14, tzinfo=UTC)
+CLAUDE = DriverSupport("claude", ClaudeDriver.capabilities)
+CODEX = DriverSupport("codex", CodexDriver.capabilities)
 
 
 def events_of(payloads: list[Payload]) -> list[Event]:
@@ -52,7 +57,7 @@ def grade(
     events: list[Event], *graders: dict[str, object], **fields: object
 ) -> dict[str, GradeResult]:
     named = [{"name": f"g{i}", **g} for i, g in enumerate(graders)]
-    results = TrialGrader(case(graders=named, **fields), "claude", None).grade(events)
+    results = TrialGrader(case(graders=named, **fields), CLAUDE, None).grade(events)
     return {r.name: r for r in results}
 
 
@@ -160,7 +165,7 @@ class TestEventGraders:
             case(
                 graders=[{"name": "g", "type": "raw_regex", "driver": "claude", "pattern": "hook"}]
             ),
-            "claude",
+            CLAUDE,
             '{"type":"hook_started"}\n{"type":"hook_response"}\n',
         ).grade(events_of([End(status="ok")]))
 
@@ -191,3 +196,63 @@ class TestTrialVerdict:
         )
 
         assert not TrialGrader.passed(events, [])
+
+
+class TestDriverSupport:
+    """What a driver can't report grades n/a, never fail, and a pass needs real evidence."""
+
+    APPLY_PATCH = ToolCall(
+        id="p",
+        kind="edit",
+        name="apply_patch",
+        input={"changes": [{"path": "/ws/.mz/notes.md", "kind": "add"}]},
+    )
+
+    def on(self, support: DriverSupport, *graders: dict[str, object]) -> dict[str, str]:
+        named = [{"name": f"g{i}", **g} for i, g in enumerate(graders)]
+        events = events_of([self.APPLY_PATCH, End(status="ok")])
+        return verdicts(
+            {r.name: r for r in TrialGrader(case(graders=named), support, None).grade(events)}
+        )
+
+    def test_codex_answers_none_of_the_graders_it_has_no_events_for(self) -> None:
+        unanswerable: list[dict[str, object]] = [
+            {"type": "subagent", "subagent": "researcher"},
+            {"type": "tool_called", "kind": "write", "min": 0, "max": 0},
+            {"type": "tool_called", "kind": "edit", "match": "old_string"},
+            {"type": "tool_order", "sequence": ["read", "edit"]},
+        ]
+
+        assert set(self.on(CODEX, *unanswerable).values()) == {"n/a"}
+        assert set(self.on(CLAUDE, *unanswerable).values()) == {"pass", "fail"}
+
+    def test_path_match_reads_the_paths_of_an_apply_patch(self) -> None:
+        verdict = self.on(
+            CODEX, {"type": "tool_called", "kind": "edit", "path_match": r"\.mz/notes"}
+        )
+
+        assert verdict == {"g0": "pass"}
+
+    def test_driver_without_skills_leaves_routing_ungraded(self) -> None:
+        support = DriverSupport("bare", Capabilities())
+        results = TrialGrader(
+            case(kind="fire", expect={"skill": "memory-note"}), support, None
+        ).grade(events_of([End(status="ok")]))
+
+        assert (results[0].verdict, results[0].detail) == (
+            "n/a",
+            "bare reports no skill activations",
+        )
+
+    def test_case_is_applicable_when_one_assertion_can_be_answered(self) -> None:
+        only_subagent = case(graders=[{"name": "s", "type": "subagent", "subagent": "x"}])
+        routed = case(
+            kind="fire",
+            expect={"skill": "audit"},
+            graders=[{"name": "s", "type": "subagent", "subagent": "x"}],
+        )
+
+        assert not CODEX.applicable(only_subagent)
+        assert CODEX.gaps(only_subagent) == ["codex reports no subagent names"]
+        assert CODEX.applicable(routed)
+        assert CLAUDE.applicable(only_subagent)

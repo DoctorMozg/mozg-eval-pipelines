@@ -25,6 +25,13 @@ class Capabilities(StrictModel):
     hooks: Support = "none"
     usage: Literal["usd", "tokens", "none"] = "none"
     isolation: Literal["none", "home", "container"] = "none"
+    tools: list[ToolKind] = Field(
+        default_factory=list, description="tool kinds whose calls the driver reports"
+    )
+    tool_input: list[ToolKind] = Field(
+        default_factory=list,
+        description="kinds whose call input uses Claude Code's field names, so `match` applies",
+    )
 
 
 class DriverManifest(StrictModel):
@@ -68,6 +75,7 @@ class TrialRequest(StrictModel):
 
 class Driver(Protocol):
     name: str
+    capabilities: Capabilities
 
     async def version(self) -> str: ...
 
@@ -81,6 +89,7 @@ class StdioDriver:
 
     def __init__(self, manifest: DriverManifest, raw_dir: Path) -> None:
         self.name = manifest.name
+        self.capabilities = manifest.capabilities
         self.manifest = manifest
         self._child = ChildProcess(f"driver {manifest.name}", raw_dir)
 

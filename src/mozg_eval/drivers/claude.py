@@ -9,7 +9,7 @@ from pathlib import Path
 from pydantic import BaseModel, JsonValue, ValidationError
 
 from mozg_eval.drivers.process import ChildProcess
-from mozg_eval.drivers.protocol import TrialRequest
+from mozg_eval.drivers.protocol import Capabilities, TrialRequest
 from mozg_eval.events.models import (
     End,
     Error,
@@ -182,6 +182,15 @@ def isolated_env(base: Mapping[str, str], home: Path, real_config: Path) -> dict
 
 class ClaudeDriver:
     name = "claude"
+    capabilities = Capabilities(
+        skills="native",
+        subagents="native",
+        hooks="native",
+        usage="usd",
+        isolation="home",
+        tools=list(CLAUDE_TOOLS),
+        tool_input=list(CLAUDE_TOOLS),
+    )
 
     def __init__(self, home: Path, raw_dir: Path, executable: str = "claude") -> None:
         self.home = home

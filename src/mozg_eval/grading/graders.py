@@ -21,6 +21,7 @@ from mozg_eval.events.models import (
     ToolResult,
 )
 from mozg_eval.grading.models import GradeResult, Verdict
+from mozg_eval.grading.support import DriverSupport
 from mozg_eval.runner.checks import in_range, needs_workspace
 from mozg_eval.spec.models import (
     Case,
@@ -48,6 +49,16 @@ def _bare(name: str) -> str:
     return name.rpartition(":")[2]
 
 
+def _paths(tool_input: dict[str, JsonValue]) -> list[str]:
+    """Files a call touches: Claude names one per call, Codex's apply_patch lists `changes`."""
+    paths = [v for k in _PATH_KEYS if isinstance(v := tool_input.get(k), str)]
+    changes = tool_input.get("changes")
+    for change in changes if isinstance(changes, list) else []:
+        if isinstance(change, dict) and isinstance(path := change.get("path"), str):
+            paths.append(path)
+    return paths
+
+
 def _compact(value: dict[str, JsonValue]) -> str:
     return json.dumps(value, separators=(",", ":"), ensure_ascii=False)
 
@@ -61,9 +72,9 @@ def _matches_call(call: ToolCall, step: ToolRef) -> bool:
 class TrialGrader:
     """Grades one trial of a case; `raw` is the driver's raw stream, for `raw_regex`."""
 
-    def __init__(self, case: Case, driver: str, raw: str | None) -> None:
+    def __init__(self, case: Case, support: DriverSupport, raw: str | None) -> None:
         self.case = case
-        self.driver = driver
+        self.support = support
         self.raw = raw
 
     def grade(self, events: Sequence[Event]) -> list[GradeResult]:
@@ -89,6 +100,9 @@ class TrialGrader:
         return end.status == "ok" and all(g.verdict != "fail" for g in grades)
 
     def _expect(self, payloads: list[Payload]) -> GradeResult:
+        arm = self.case.expect.arm
+        if gap := self.support.expect_gap(self.case):
+            return GradeResult(name=EXPECT, verdict="n/a", detail=gap, arm=arm)
         fired = [p.skill for p in payloads if isinstance(p, SkillActivated)]
         detail = f"fired: {', '.join(fired) or 'none'}"
         expected = self.case.expect.skill
@@ -99,9 +113,11 @@ class TrialGrader:
         else:
             ok = expected is not None and _bare(expected) in fired
         verdict: Verdict = "pass" if ok else "fail"
-        return GradeResult(name=EXPECT, verdict=verdict, detail=detail, arm=self.case.expect.arm)
+        return GradeResult(name=EXPECT, verdict=verdict, detail=detail, arm=arm)
 
     def _grade(self, grader: Grader, payloads: list[Payload]) -> tuple[Verdict, str]:
+        if gap := self.support.gap(grader):
+            return "n/a", gap
         if needs_workspace(grader):
             check = next(
                 (p for p in payloads if isinstance(p, CheckResult) and p.name == grader.name),
@@ -114,9 +130,7 @@ class TrialGrader:
             return "n/a", "the LLM judge arrives in milestone 11"
         if isinstance(grader, ToolOrderGrader):
             return self._tool_order(grader, payloads)
-        if isinstance(grader, RawRegexGrader) and (
-            grader.driver != self.driver or self.raw is None
-        ):
+        if isinstance(grader, RawRegexGrader) and self.raw is None:
             return "n/a", f"raw stream of driver {grader.driver} not available"
         if not isinstance(grader, GraderBase):
             raise ValueError(f"grader {grader.name} ({grader.type}) has no count to check")
@@ -167,8 +181,7 @@ class TrialGrader:
             return False
         if grader.path_match is None:
             return True
-        path = next((call.input[k] for k in _PATH_KEYS if isinstance(call.input.get(k), str)), "")
-        return bool(re.search(grader.path_match, str(path)))
+        return any(re.search(grader.path_match, path) for path in _paths(call.input))
 
     @staticmethod
     def _text(grader: RegexGrader, payloads: list[Payload]) -> str:

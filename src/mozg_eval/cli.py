@@ -11,6 +11,7 @@ from mozg_eval import __version__
 from mozg_eval.drivers.claude import ClaudeDriver
 from mozg_eval.drivers.codex import CodexDriver
 from mozg_eval.grading.stats import SuiteStats
+from mozg_eval.grading.support import DriverSupport
 from mozg_eval.importers.claude_plugin_eval import (
     CaseImportError,
     ClaudePluginEvalImporter,
@@ -124,7 +125,7 @@ def run(
     command = executable or driver.value
     suite = SuiteRunner(
         stores,
-        driver.value,
+        DriverSupport(driver.value, DRIVERS[driver].capabilities),
         lambda home, raw_dir: DRIVERS[driver](home, raw_dir, executable=command),
         DEFAULT_WORKSPACE,
         overrides,

@@ -15,6 +15,7 @@ from mozg_eval.drivers.protocol import Driver, Limits, TrialRequest
 from mozg_eval.events.models import End, EndStatus, Event, Payload, SkillActivated, Usage
 from mozg_eval.grading.graders import TrialGrader
 from mozg_eval.grading.models import GradeResult
+from mozg_eval.grading.support import DriverSupport
 from mozg_eval.runner.checks import WorkspaceChecks, needs_workspace, snapshot
 from mozg_eval.runner.settings import resolve_settings
 from mozg_eval.runner.trial import TrialRunner, TurnGuard
@@ -72,13 +73,14 @@ class SuiteRunner:
     def __init__(
         self,
         stores: Stores,
-        driver_name: str,
+        support: DriverSupport,
         make_driver: DriverFactory,
         ws: str,
         overrides: Mapping[str, JsonValue],
     ) -> None:
         self.stores = stores
-        self.driver_name = driver_name
+        self.support = support
+        self.driver_name = support.driver
         self.make_driver = make_driver
         self.ws = ws
         self.overrides = overrides
@@ -92,6 +94,9 @@ class SuiteRunner:
             return f"case excludes driver {self.driver_name}"
         if case.history_file or case.add_dirs:
             return "history_file and add_dirs are not supported yet"
+        if not self.support.applicable(case):
+            # Every grade would be n/a, so the trial could only pass vacuously.
+            return f"nothing to grade on {self.driver_name}: {'; '.join(self.support.gaps(case))}"
         return None
 
     async def run(self, case_files: Sequence[Path]) -> tuple[RunRecord, list[TrialSummary]]:
@@ -153,7 +158,7 @@ class SuiteRunner:
                     await self.stores.artifacts.put(self.ws, ref, _file_chunks(raw_dir / name))
             raw_log = raw_dir / "raw.jsonl"
             raw = raw_log.read_text(errors="replace") if raw_log.exists() else None
-        grades = TrialGrader(case, self.driver_name, raw).grade(events)
+        grades = TrialGrader(case, self.support, raw).grade(events)
         status, cost = _outcome(events)
         record = TrialRecord(
             id=trial_id,
