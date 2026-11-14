@@ -512,20 +512,39 @@ drill-down, and Vega-Lite does brushing. Revisit only if the UI needs real clien
 
 ### 4.10 CLI and CI
 
-| Command                                                    | Purpose                                                                                                          |
-| ---------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
-| `mzeval run <suite> [--driver ...] [--push] [--run-id ID]` | run locally; exit 0 / 1 / 2 / 130; JUnit and HTML in the run dir; `--run-id` attaches to a run the server queued |
-| `mzeval plan <suite>`                                      | validate cases and estimate cost from past runs, no tokens spent                                                 |
-| `mzeval compare <run> [<baseline-run>]`                    | paired per-case score delta with its CI: a run's with/without arms, or a run against a baseline run              |
-| `mzeval push <run-dir>`                                    | upload a finished run (retry after a failed `--push`)                                                            |
-| `mzeval ingest <file> --format ...`                        | import external traces as a source run                                                                           |
-| `mzeval rejudge / renormalize <run>`                       | regrade or re-parse stored runs at no agent cost                                                                 |
-| `mzeval serve`                                             | the server (also the Docker entrypoint)                                                                          |
-| `mzeval remote run <suite>`                                | ask the server to dispatch the suite's CI workflow, same as the Run button (phase C)                             |
+| Command                                                    | Purpose                                                                                                     |
+| ---------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
+| `mzeval run <suite> [--driver ...] [--push] [--run-id ID]` | run locally; exit 0 / 1 / 2 / 130; `--junit FILE`; `--run-id` attaches to a run the server queued (phase C) |
+| `mzeval plan <suite>`                                      | validate cases and estimate cost from past runs, no tokens spent                                            |
+| `mzeval compare <run> [<baseline-run>]`                    | paired per-case score delta with its CI: a run's with/without arms, or a run against a baseline run         |
+| `mzeval push <run-id>`                                     | upload a stored run (retry after a failed `--push`)                                                         |
+| `mzeval ingest <file> --format ...`                        | import external traces as a source run                                                                      |
+| `mzeval rejudge / renormalize <run>`                       | regrade or re-parse stored runs at no agent cost                                                            |
+| `mzeval serve`                                             | the server (also the Docker entrypoint)                                                                     |
+| `mzeval remote run <suite>`                                | ask the server to dispatch the suite's CI workflow, same as the Run button (phase C)                        |
 
 Server URL and token come from `MZEVAL_SERVER` and `MZEVAL_TOKEN`. In CI the eval result alone
 decides the exit code. A failed push is reported, the run dir keeps everything, and `mzeval push`
 retries later. A published GitHub Action wraps `run` with a pass-rate threshold and JUnit upload.
+
+As built (milestone 14):
+
+- JUnit has one testcase per case, so a reporter agrees with the exit code; a skipped case keeps
+  its reason. In an ablation run only the with-bundle arm is reported.
+- `--push` and `mzeval push` use four idempotent calls, so a resend is safe:
+  `PUT /v1/runs/{run}`, `PUT /v1/runs/{run}/trials/{trial}` (the trial with its grades and judge
+  spend), `POST …/trials/{trial}/events` (the server skips a resent `(trial, seq)`) and
+  `PUT …/trials/{trial}/artifacts/{name}`. The HTTP client is `httpx2`, which the judge SDKs
+  already bring in, not `httpx`.
+- The action is `action.yml` at the repo root (`uses: DoctorMozg/mozg-eval-pipelines@v0`). It
+  writes the output to the job summary, which needs no `checks: write` and so also works on PRs
+  from forks, and uploads the JUnit file. Its self-test replays a recorded run through the fake
+  `claude`, then seeds a regression and asserts that the action fails.
+- Release binaries come from `scripts/build-pyapp.sh`: PyApp 0.31.0 embeds a python-build-standalone
+  3.13 that already holds the wheel and its locked dependencies (`PYAPP_SKIP_INSTALL`), so the
+  binary installs nothing and needs no network. Linux, macOS (arm64 and x86_64) and Windows build
+  on native runners. The Linux binary is built on Ubuntu 22.04 and needs glibc 2.35 or newer. The
+  macOS binaries are unsigned, so a downloaded one needs `xattr -d com.apple.quarantine`.
 
 ### 4.11 Runner: a thin executor, run locally or in CI
 
@@ -576,8 +595,11 @@ server. It is the same on a laptop, in a CI check and in a CI job the server sta
   `run_id` and the server joins them.
 - GitHub may start cron runs late and disables scheduled workflows after 60 days without activity
   in a public repo, so the trends UI flags a series whose expected point is missing.
-- To check at milestone 14: agent auth in CI (Claude Code via an API key or a `claude setup-token`
-  token in `CLAUDE_CODE_OAUTH_TOKEN`; Codex via an API key).
+- Agent auth in CI (checked at milestone 14): Claude Code reads `ANTHROPIC_API_KEY` or a
+  `claude setup-token` token in `CLAUDE_CODE_OAUTH_TOKEN` with no login on disk, and the driver
+  passes both through. When both are set the API key wins, so a judge key in the same env bills
+  the agent to the API. Codex reads `CODEX_API_KEY`. Anthropic's terms point automated use at API
+  keys, so CI should use one.
 
 A pull daemon of our own (`mzeval agent`) is deferred until a host outside GitHub Actions needs it;
 a GitLab pipeline trigger would be a second dispatch adapter of the same size.
