@@ -548,6 +548,12 @@ As built (milestone 14):
   on native runners. The Linux binary is built on Ubuntu 22.04 and needs glibc 2.35 or newer. The
   macOS binaries are unsigned, so a downloaded one needs `xattr -d com.apple.quarantine`.
 
+As built (before milestone 15): `run` gained the three knobs the plugin repos' `make eval` passes to
+`claude plugin eval`. `--case GLOB` and `--tag TAG` select cases after loading. `--jobs N` runs
+trials through a semaphore inside one task group, so a fixture error cancels the trials still
+running. `--max-cost-usd` is one `SpendCap` shared by every trial's `CostGuard` plus the judge's
+spend; a trial that crosses it is cancelled, later ones never start, and the run exits 2.
+
 ### 4.11 Runner: a thin executor, run locally or in CI
 
 The runner's only job is to **execute trials and emit their results in the canonical format**. It

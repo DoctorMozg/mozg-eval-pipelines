@@ -148,7 +148,11 @@ Keys come from the environment, and a missing key stops the run before any agent
 | `schema`                                      | print the case JSON Schema                                            |
 | `import claude-plugin-eval ROOTS`             | convert `claude plugin eval` 1.1 cases                                |
 
-`run` takes `--runs`, `--model`, `--threshold`, `--driver`, `--executable`, `--judge`, `--ablation`, `--junit` and `--push`.
+`run` takes `--runs`, `--model`, `--threshold`, `--driver`, `--executable`, `--judge`, `--ablation`, `--junit` and `--push`, plus:
+
+- `--case GLOB` and `--tag TAG`, both repeatable, run only the matching cases. A selection that matches nothing exits 2 before any agent starts.
+- `--jobs N` runs up to N trials side by side, each in its own temp HOME and workspace. They share your login and its rate limit. Output keeps the plan order.
+- `--max-cost-usd X` caps agent and judge spend for the run. Once it is reached no trial starts, the run exits 2 and says how many trials it left out. Claude reports a trial's cost only at its end, so on Claude the cap stops new trials rather than cancelling the one running.
 
 ## Ablation, compare, plan
 
@@ -177,7 +181,7 @@ Comparisons are paired per case. One run per case gets an exact McNemar test. Se
 
 Inputs: `paths` (required, one per line), `driver`, `threshold`, `runs`, `model`, `judge`, `ablation`, `executable`, `push`, `junit-file` (default `mzeval-junit.xml`) and `artifact-name`. Outputs: `exit-code` and `junit-file`. The action writes the run output to the job summary, uploads the JUnit file as an artifact and exits with the run's code. The self-test in `.github/workflows/action.yml` replays a recorded run through the fake `claude`, seeds a regression and asserts the action fails.
 
-`run --junit FILE` writes one testcase per case, so a JUnit reporter agrees with the exit code: `<error>` when a run errored or timed out, `<failure>` below the threshold, `<skipped>` with the reason. Exit codes: 0 every case meets the threshold, 1 a case doesn't, 2 a trial errored or the setup failed, 130 interrupted.
+`run --junit FILE` writes one testcase per case, so a JUnit reporter agrees with the exit code: `<error>` when a run errored or timed out, `<failure>` below the threshold, `<skipped>` with the reason. Exit codes: 0 every case meets the threshold, 1 a case doesn't, 2 a trial errored, the setup failed or the spend cap stopped the run, 130 interrupted.
 
 Use API keys in CI. A `claude setup-token` token in `CLAUDE_CODE_OAUTH_TOKEN` works, but Anthropic's terms point automated use at API keys.
 
