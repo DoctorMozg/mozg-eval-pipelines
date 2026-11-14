@@ -1,4 +1,5 @@
 import asyncio
+import uuid
 from collections.abc import AsyncIterator, Iterator
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -20,6 +21,7 @@ from mozg_eval.storage.base import (
     ResultStore,
     RunRecord,
     TrialRecord,
+    new_id,
 )
 from mozg_eval.storage.config import StorageConfig, open_stores
 from mozg_eval.storage.disk import DiskArtifactStore, DiskEventStore
@@ -66,6 +68,19 @@ def results(tmp_path: Path) -> Iterator[ResultStore]:
     store = SqlResultStore(f"sqlite:///{tmp_path / 'mzeval.db'}")
     yield store
     store.close()
+
+
+class TestNewId:
+    def test_ids_made_in_the_same_millisecond_sort_in_creation_order(self) -> None:
+        ids = [new_id() for _ in range(2000)]
+
+        assert sorted(ids) == ids
+        assert len(set(ids)) == len(ids)
+
+    def test_is_a_uuid_version_7(self) -> None:
+        parsed = uuid.UUID(new_id())
+
+        assert (parsed.version, parsed.variant) == (7, uuid.RFC_4122)
 
 
 class TestEventStoreContract:

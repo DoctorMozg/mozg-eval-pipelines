@@ -2,6 +2,7 @@
 
 import os
 import re
+import threading
 import time
 import uuid
 from collections.abc import AsyncIterator, Sequence
@@ -21,11 +22,24 @@ type TrialArm = Literal["with", "without"]
 _ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$")
 
 
+# Within one millisecond the 74 low bits count up from a random start (RFC 9562 6.2, method 1),
+# so stores that order by id keep creation order; the start leaves 2**72 steps of headroom.
+_last_id = (0, 0)
+_id_lock = threading.Lock()
+
+
 def new_id() -> str:
-    """A UUIDv7 (RFC 9562): sortable by creation time, so ids never clash across databases."""
-    millis = time.time_ns() // 1_000_000
-    rand = int.from_bytes(os.urandom(10))
-    rand_a, rand_b = rand >> 68, rand & (2**62 - 1)
+    """A UUIDv7 (RFC 9562): increasing within the process, and never clashing across databases."""
+    global _last_id
+    with _id_lock:
+        millis = time.time_ns() // 1_000_000
+        last_millis, last_counter = _last_id
+        if millis <= last_millis:
+            millis, counter = last_millis, last_counter + 1
+        else:
+            counter = int.from_bytes(os.urandom(9))
+        _last_id = (millis, counter)
+    rand_a, rand_b = counter >> 62, counter & (2**62 - 1)
     value = (millis << 80) | (0x7 << 76) | (rand_a << 64) | (0b10 << 62) | rand_b
     return str(uuid.UUID(int=value))
 
