@@ -7,3 +7,6 @@ dist/
 .mz/
 .idea/
 .vscode/
+
+# local secrets
+.env
