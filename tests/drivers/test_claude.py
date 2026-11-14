@@ -7,7 +7,7 @@ from typing import Any, Protocol
 
 import pytest
 
-from mozg_eval.drivers import protocol
+from mozg_eval.drivers import process
 from mozg_eval.drivers.claude import ClaudeDriver, StreamLine, isolated_env, normalize
 from mozg_eval.drivers.protocol import Limits, TrialRequest
 from mozg_eval.events.models import (
@@ -227,7 +227,7 @@ class TestClaudeDriver:
     def test_claude_that_ignores_sigterm_is_killed(
         self, run: Run, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        monkeypatch.setattr(protocol, "CANCEL_GRACE_S", 0.2)
+        monkeypatch.setattr(process, "CANCEL_GRACE_S", 0.2)
         began = time.monotonic()
 
         events = run(mode="hang", timeout_s=1)

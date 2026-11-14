@@ -10,15 +10,11 @@ from typing import Literal, Protocol, Self
 import yaml
 from pydantic import Field, ValidationError
 
+from mozg_eval.drivers.process import ChildProcess
 from mozg_eval.events.models import PAYLOAD, Error, Payload
 from mozg_eval.spec.models import StrictModel, ToolKind
 
 log = logging.getLogger(__name__)
-
-# How long a driver has to exit after a cancel before it is killed.
-CANCEL_GRACE_S = 5.0
-# A line can hold a whole skill body or tool output; asyncio's default limit is 64 KiB.
-LINE_LIMIT = 16 << 20
 
 type Support = Literal["native", "inferred", "none"]
 
@@ -86,9 +82,7 @@ class StdioDriver:
     def __init__(self, manifest: DriverManifest, raw_dir: Path) -> None:
         self.name = manifest.name
         self.manifest = manifest
-        self.raw_dir = raw_dir
-        self._process: asyncio.subprocess.Process | None = None
-        self._kill_timer: asyncio.TimerHandle | None = None
+        self._child = ChildProcess(f"driver {manifest.name}", raw_dir)
 
     async def version(self) -> str:
         process = await asyncio.create_subprocess_exec(
@@ -100,59 +94,30 @@ class StdioDriver:
         return out.decode().strip()
 
     async def run(self, request: TrialRequest) -> AsyncIterator[Payload]:
-        self.raw_dir.mkdir(parents=True, exist_ok=True)
-        with (
-            (self.raw_dir / "stderr.log").open("wb") as stderr,
-            (self.raw_dir / "raw.jsonl").open("ab") as raw,
-        ):
-            process = self._process = await asyncio.create_subprocess_exec(
-                *self.manifest.command,
-                stdin=asyncio.subprocess.PIPE,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=stderr,
-                cwd=request.workspace,
-                limit=LINE_LIMIT,
-            )
-            await self._send(request.model_dump_json())
-            assert process.stdout is not None
-            # Read to EOF even after a cancel, so a chatty driver never blocks on a full pipe.
-            async for line in process.stdout:
-                raw.write(line)
-                if not line.strip():
-                    continue
-                try:
-                    yield PAYLOAD.validate_json(line)
-                except ValidationError as exc:
-                    reason = exc.errors()[0]["msg"]
-                    yield Error(message=f"driver {self.name} sent an invalid event: {reason}")
-                    await self.cancel("invalid event")
-            code = await process.wait()
-        if self._kill_timer is not None:
-            self._kill_timer.cancel()
-        log.debug("driver %s exited with %s", self.name, code)
-        if code > 0:
+        lines = self._child.lines(
+            self.manifest.command,
+            cwd=request.workspace,
+            stdin=request.model_dump_json().encode() + b"\n",
+            keep_stdin=True,
+        )
+        async for line in lines:
+            try:
+                yield PAYLOAD.validate_json(line)
+            except ValidationError as exc:
+                reason = exc.errors()[0]["msg"]
+                yield Error(message=f"driver {self.name} sent an invalid event: {reason}")
+                await self.cancel("invalid event")
+        code = self._child.returncode
+        if code is not None and code > 0:
             yield Error(message=f"driver {self.name} exited with code {code}; see stderr.log")
 
     async def cancel(self, reason: str) -> None:
-        process = self._process
-        if process is None or process.returncode is not None or self._kill_timer is not None:
+        if not self._child.running() or self._child.cancelling:
             return
         log.info("cancelling driver %s: %s", self.name, reason)
-        loop = asyncio.get_running_loop()
-        self._kill_timer = loop.call_later(CANCEL_GRACE_S, self._kill, process)
+        self._child.kill_later()
+        message = json.dumps({"type": "cancel", "reason": reason})
         try:
-            await self._send(json.dumps({"type": "cancel", "reason": reason}))
+            await self._child.send(message.encode() + b"\n")
         except (BrokenPipeError, ConnectionResetError):
             log.debug("driver %s closed stdin before the cancel; the kill timer stands", self.name)
-
-    def _kill(self, process: asyncio.subprocess.Process) -> None:
-        if process.returncode is None:
-            log.warning("driver %s ignored cancel for %ss; killing it", self.name, CANCEL_GRACE_S)
-            process.kill()
-
-    async def _send(self, line: str) -> None:
-        assert self._process is not None
-        stdin = self._process.stdin
-        assert stdin is not None
-        stdin.write(line.encode() + b"\n")
-        await stdin.drain()

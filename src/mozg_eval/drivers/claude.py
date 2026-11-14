@@ -3,13 +3,12 @@
 import asyncio
 import logging
 import os
-import signal
 from collections.abc import AsyncIterator, Mapping
 from pathlib import Path
 
 from pydantic import BaseModel, JsonValue, ValidationError
 
-from mozg_eval.drivers import protocol
+from mozg_eval.drivers.process import ChildProcess
 from mozg_eval.drivers.protocol import TrialRequest
 from mozg_eval.events.models import (
     End,
@@ -186,10 +185,8 @@ class ClaudeDriver:
 
     def __init__(self, home: Path, raw_dir: Path, executable: str = "claude") -> None:
         self.home = home
-        self.raw_dir = raw_dir
         self.executable = executable
-        self._process: asyncio.subprocess.Process | None = None
-        self._kill_timer: asyncio.TimerHandle | None = None
+        self._child = ChildProcess("claude", raw_dir)
 
     async def version(self) -> str:
         process = await asyncio.create_subprocess_exec(
@@ -233,56 +230,22 @@ class ClaudeDriver:
 
     async def run(self, request: TrialRequest) -> AsyncIterator[Payload]:
         env = self._prepare_home() | request.env
-        self.raw_dir.mkdir(parents=True, exist_ok=True)
-        with (
-            (self.raw_dir / "stderr.log").open("wb") as stderr,
-            (self.raw_dir / "raw.jsonl").open("ab") as raw,
-        ):
-            process = self._process = await asyncio.create_subprocess_exec(
-                *self.command(request),
-                stdin=asyncio.subprocess.PIPE,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=stderr,
-                cwd=request.workspace,
-                env=env,
-                limit=protocol.LINE_LIMIT,
-            )
-            assert process.stdin is not None
-            assert process.stdout is not None
-            # On stdin, so no prompt text can be mistaken for an option value.
-            process.stdin.write(request.prompt.encode())
-            await process.stdin.drain()
-            process.stdin.close()
-            async for raw_line in process.stdout:
-                raw.write(raw_line)
-                if not raw_line.strip():
-                    continue
-                try:
-                    line = StreamLine.model_validate_json(raw_line)
-                except ValidationError:
-                    text = raw_line.decode(errors="replace").strip()[:200]
-                    yield Log(level="warning", text=f"claude printed a non-event line: {text}")
-                    continue
-                for payload in normalize(line):
-                    yield payload
-            code = await process.wait()
-        if self._kill_timer is not None:
-            self._kill_timer.cancel()
-        log.debug("claude exited with %s", code)
-        if code > 0:
+        # On stdin, so no prompt text can be mistaken for an option value.
+        lines = self._child.lines(
+            self.command(request), cwd=request.workspace, env=env, stdin=request.prompt.encode()
+        )
+        async for raw_line in lines:
+            try:
+                line = StreamLine.model_validate_json(raw_line)
+            except ValidationError:
+                text = raw_line.decode(errors="replace").strip()[:200]
+                yield Log(level="warning", text=f"claude printed a non-event line: {text}")
+                continue
+            for payload in normalize(line):
+                yield payload
+        code = self._child.returncode
+        if code is not None and code > 0:
             yield Error(message=f"claude exited with code {code}; see stderr.log")
 
     async def cancel(self, reason: str) -> None:
-        process = self._process
-        if process is None or process.returncode is not None or self._kill_timer is not None:
-            return
-        log.info("cancelling claude: %s", reason)
-        process.send_signal(signal.SIGTERM)
-        self._kill_timer = asyncio.get_running_loop().call_later(
-            protocol.CANCEL_GRACE_S, self._kill, process
-        )
-
-    def _kill(self, process: asyncio.subprocess.Process) -> None:
-        if process.returncode is None:
-            log.warning("claude ignored SIGTERM for %ss; killing it", protocol.CANCEL_GRACE_S)
-            process.kill()
+        self._child.terminate(reason)

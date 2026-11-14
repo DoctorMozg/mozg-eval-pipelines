@@ -6,7 +6,7 @@ from typing import Protocol
 
 import pytest
 
-from mozg_eval.drivers import protocol
+from mozg_eval.drivers import process
 from mozg_eval.drivers.protocol import DriverManifest, Limits, StdioDriver, TrialRequest
 from mozg_eval.events.models import (
     End,
@@ -109,7 +109,7 @@ class TestTrialRunner:
     def test_driver_that_ignores_cancel_is_killed(
         self, trial: Trial, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        monkeypatch.setattr(protocol, "CANCEL_GRACE_S", 0.2)
+        monkeypatch.setattr(process, "CANCEL_GRACE_S", 0.2)
         began = time.monotonic()
 
         events = trial("stubborn", CostGuard(0.25))
