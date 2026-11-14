@@ -197,14 +197,14 @@ Envelope: `run, trial, seq, t, type, payload, evidence (native | inferred)`. Typ
 `message`, `tool_call`, `tool_result`, `skill_activated`, `subagent_spawned`, `file_change`,
 `hook_fired`, `usage`, `log`, `error`, `end`, and `check_result` (post-run workspace checks, 4.11).
 
-| Canonical event    | Claude Code                          | Codex                                               | Pi                     | OpenCode V2                      |
-| ------------------ | ------------------------------------ | --------------------------------------------------- | ---------------------- | -------------------------------- |
-| `skill_activated`  | `tool_use` name `Skill`              | heuristic: `cat …/SKILL.md` + `$skill` mention      | `read` of `…/SKILL.md` | `tool_use`, `part.tool=skill`    |
-| `subagent_spawned` | `tool_use` name `Agent`              | `collab_tool_call` `spawn_agent`                    | — (no subagents)       | `tool_use`, `part.tool=subagent` |
-| `tool_call{kind}`  | `Bash/Read/Write/Edit/…`             | `command_execution`, `file_change`, `mcp_tool_call` | `tool_execution_*`     | `tool_use` (`shell`, `edit`, …)  |
-| `file_change`      | from `Write`/`Edit` + workspace diff | `file_change` + workspace diff                      | workspace diff         | workspace diff                   |
-| `hook_fired`       | `hook_response`                      | capture wrapper (existing bridge)                   | extension              | plugin                           |
-| `usage`            | `result.total_cost_usd` + usage      | tokens only → priced by us                          | `usage.cost.total`     | sum of `step_finish`             |
+| Canonical event    | Claude Code                          | Codex                                                    | Pi                     | OpenCode V2                      |
+| ------------------ | ------------------------------------ | -------------------------------------------------------- | ---------------------- | -------------------------------- |
+| `skill_activated`  | `tool_use` name `Skill`              | inferred: a command that reads the installed `SKILL.md`  | `read` of `…/SKILL.md` | `tool_use`, `part.tool=skill`    |
+| `subagent_spawned` | `tool_use` name `Agent`              | — (`spawn_agent` names no agent; a `subagent` tool call) | — (no subagents)       | `tool_use`, `part.tool=subagent` |
+| `tool_call{kind}`  | `Bash/Read/Write/Edit/…`             | `command_execution`, `file_change`, `mcp_tool_call`      | `tool_execution_*`     | `tool_use` (`shell`, `edit`, …)  |
+| `file_change`      | from `Write`/`Edit` + workspace diff | `file_change` + workspace diff                           | workspace diff         | workspace diff                   |
+| `hook_fired`       | `hook_response`                      | capture wrapper around native plugin hooks               | extension              | plugin                           |
+| `usage`            | `result.total_cost_usd` + usage      | tokens only → priced by us                               | `usage.cost.total`     | sum of `step_finish`             |
 
 Every grader declares which capabilities it needs. An unsupported grader reports `n/a`, never
 `fail`, and the report shows a per-connector coverage column so gaps stay visible instead of looking
@@ -713,9 +713,12 @@ Each milestone stays at or under 10 files and 400 changed lines, except mechanic
     recorded traces; the HTML renders the heatmap, Wilson bars and a trend from two stored runs.
 09. **Parity gate:** run the imported mz-memory and publish suites on Claude. → verify: per-case
     pass rates agree with the last `claude plugin eval` JSON within the CI.
-10. **Codex driver:** ports `codex_runtime`, `codex_process` and the hook bridge. Skills are copied
-    into `<workspace>/.agents/skills/` and a read of `skills/<name>/` is emitted as `skill_activated`
-    with `evidence: inferred`, as coder-eval does; `CODEX_HOME` is always a temp dir. → verify: the
+10. **Codex driver:** each Claude plugin is rendered as a native Codex plugin (`.codex-plugin/`) in a
+    per-trial local marketplace and installed into a temp `CODEX_HOME`, so skills and hooks run
+    natively; the hook bridge is gone. Each hook command runs through a capture wrapper that logs it,
+    since `codex exec --json` records no hooks. A command that reads an installed `SKILL.md` is
+    emitted as `skill_activated` with `evidence: inferred`. Codex has no turn cap, so the driver stops
+    once messages or tool calls exceed `max_turns`, and ends that trial `ok`. → verify: the
     16 spike routing cases that the current runner marks unsupported are graded; the
     hook-dependent spike case (inject-recent-decision) passes; the "unsupported" share drops from
     66% to the honestly vendor-specific remainder (~6%).

@@ -47,7 +47,7 @@ class TestRunCommand:
     def test_runs_each_repeat_and_stores_everything(
         self, suite: Path, fake_claude: Path, tmp_path: Path
     ) -> None:
-        result = CliRunner().invoke(app, ["run", str(suite), "--claude", str(fake_claude)])
+        result = CliRunner().invoke(app, ["run", str(suite), "--executable", str(fake_claude)])
 
         assert result.exit_code == 0, result.output
         assert result.output.count("remember-decision #") == 2
@@ -67,7 +67,9 @@ class TestRunCommand:
     def test_trial_gets_a_fresh_workspace_and_a_home_removed_after(
         self, suite: Path, fake_claude: Path, tmp_path: Path
     ) -> None:
-        CliRunner().invoke(app, ["run", str(suite), "--runs", "1", "--claude", str(fake_claude)])
+        CliRunner().invoke(
+            app, ["run", str(suite), "--runs", "1", "--executable", str(fake_claude)]
+        )
         record = json.loads((tmp_path / "record.json").read_text())
 
         assert record["files"] == [".git", "seed.txt"]
@@ -77,7 +79,7 @@ class TestRunCommand:
     def test_failing_fixture_exits_2_with_its_output(self, suite: Path, fake_claude: Path) -> None:
         (suite / "fixture.sh").write_text("echo no-such-thing >&2; exit 3\n")
 
-        result = CliRunner().invoke(app, ["run", str(suite), "--claude", str(fake_claude)])
+        result = CliRunner().invoke(app, ["run", str(suite), "--executable", str(fake_claude)])
 
         assert result.exit_code == 2
         assert "exited with 3: no-such-thing" in result.output
@@ -86,7 +88,7 @@ class TestRunCommand:
         case = suite / "case.mzeval.yaml"
         case.write_text(case.read_text() + "drivers:\n  exclude: [claude]\n")
 
-        result = CliRunner().invoke(app, ["run", str(suite), "--claude", str(fake_claude)])
+        result = CliRunner().invoke(app, ["run", str(suite), "--executable", str(fake_claude)])
 
         assert result.exit_code == 0
         assert "0 trials" in result.output
@@ -99,7 +101,9 @@ class TestRunCommand:
             case.read_text()
             + "graders:\n  - {name: seeded, type: command, run: test -f seed.txt}\n"
         )
-        CliRunner().invoke(app, ["run", str(suite), "--runs", "1", "--claude", str(fake_claude)])
+        CliRunner().invoke(
+            app, ["run", str(suite), "--runs", "1", "--executable", str(fake_claude)]
+        )
         stores = open_stores(StorageConfig.load(tmp_path, env={}))
         (run,) = stores.results.list_runs("local")
         (trial,) = stores.results.list_trials("local", run.id)
@@ -118,7 +122,7 @@ class TestRunCommand:
         case = suite / "case.mzeval.yaml"
         case.write_text(case.read_text().replace("skill: memory-note", "skill: lessons-promote"))
 
-        result = CliRunner().invoke(app, ["run", str(suite), "--claude", str(fake_claude)])
+        result = CliRunner().invoke(app, ["run", str(suite), "--executable", str(fake_claude)])
 
         assert result.exit_code == 1, result.output
         assert "FAIL remember-decision #1" in result.output
@@ -129,3 +133,40 @@ class TestRunCommand:
         grades = stores.results.list_grades("local", run.id)
         stores.results.close()
         assert [g.verdict for gs in grades.values() for g in gs] == ["fail", "fail"]
+
+    def test_codex_driver_runs_the_case_with_inferred_skills(
+        self, suite: Path, fake_codex: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("CODEX_HOME", str(tmp_path / "real-codex"))
+        manifest = tmp_path / "plugins" / "mz-memory" / ".claude-plugin" / "plugin.json"
+        manifest.parent.mkdir()
+        manifest.write_text('{"name": "mz-memory"}')
+        case = suite / "case.mzeval.yaml"
+        codex_fire = SKILL_FIRE.with_name("codex_skill_fire.jsonl")
+        case.write_text(
+            case.read_text()
+            .replace("skill: memory-note", "skill: probe-skill")
+            .replace(str(SKILL_FIRE), str(codex_fire))
+        )
+
+        result = CliRunner().invoke(
+            app,
+            [
+                "run",
+                str(suite),
+                "--runs",
+                "1",
+                "--driver",
+                "codex",
+                "--executable",
+                str(fake_codex),
+            ],
+        )
+
+        assert result.exit_code == 0, result.output
+        assert "PASS remember-decision #1: ok, skills: probe-skill, n/a" in result.output
+        stores = open_stores(StorageConfig.load(tmp_path, env={}))
+        (run,) = stores.results.list_runs("local")
+        (trial,) = stores.results.list_trials("local", run.id)
+        stores.results.close()
+        assert trial.driver == "codex"

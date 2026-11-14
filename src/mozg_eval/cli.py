@@ -1,5 +1,6 @@
 import asyncio
 import json
+from enum import StrEnum
 from pathlib import Path
 from typing import Annotated
 
@@ -8,6 +9,7 @@ from pydantic import JsonValue
 
 from mozg_eval import __version__
 from mozg_eval.drivers.claude import ClaudeDriver
+from mozg_eval.drivers.codex import CodexDriver
 from mozg_eval.grading.stats import SuiteStats
 from mozg_eval.importers.claude_plugin_eval import (
     CaseImportError,
@@ -26,6 +28,18 @@ app = typer.Typer(
     help="Run evals for coding-agent plugins and skills on Claude Code, Codex, Pi and OpenCode.",
     no_args_is_help=True,
 )
+
+
+class DriverName(StrEnum):
+    claude = "claude"
+    codex = "codex"
+
+
+DRIVERS: dict[DriverName, type[ClaudeDriver | CodexDriver]] = {
+    DriverName.claude: ClaudeDriver,
+    DriverName.codex: CodexDriver,
+}
+
 import_app = typer.Typer(help="Convert cases from other eval tools.", no_args_is_help=True)
 app.add_typer(import_app, name="import")
 
@@ -90,9 +104,12 @@ def run(
     threshold: Annotated[
         float, typer.Option(min=0.01, max=1.0, help="Pass rate each case needs; 1.0 is every run.")
     ] = 1.0,
-    claude: Annotated[str, typer.Option(help="The claude executable.")] = "claude",
+    driver: Annotated[DriverName, typer.Option(help="The agent to run.")] = DriverName.claude,
+    executable: Annotated[
+        str | None, typer.Option(help="The agent's executable; defaults to the driver name.")
+    ] = None,
 ) -> None:
-    """Run and grade cases on Claude Code.
+    """Run and grade cases on one agent.
 
     Exit 0 when every case meets the threshold, 1 when one doesn't, 2 when a trial errored.
     """
@@ -104,10 +121,11 @@ def run(
         key: value for key, value in {"runs": runs, "model": model}.items() if value is not None
     }
     stores = open_stores(StorageConfig.load(Path.cwd()))
+    command = executable or driver.value
     suite = SuiteRunner(
         stores,
-        "claude",
-        lambda home, raw_dir: ClaudeDriver(home, raw_dir, executable=claude),
+        driver.value,
+        lambda home, raw_dir: DRIVERS[driver](home, raw_dir, executable=command),
         DEFAULT_WORKSPACE,
         overrides,
     )
