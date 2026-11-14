@@ -21,7 +21,6 @@ from mozg_eval.grading.routing import RoutedTrial, Routing
 from mozg_eval.grading.stats import SuiteStats
 from mozg_eval.grading.support import DriverSupport
 from mozg_eval.importers.claude_plugin_eval import (
-    CaseImportError,
     ClaudePluginEvalImporter,
     render_report,
 )
@@ -519,11 +518,7 @@ def import_claude_plugin_eval(
     force: Annotated[bool, typer.Option(help="Overwrite existing v2 case files.")] = False,
 ) -> None:
     """Convert claude plugin eval 1.1 cases to mzeval/2; the originals are left in place."""
-    try:
-        summary = ClaudePluginEvalImporter().import_tree(roots, out, force=force)
-    except CaseImportError as exc:
-        typer.echo(str(exc), err=True)
-        raise typer.Exit(1) from exc
+    summary = ClaudePluginEvalImporter().import_tree(roots, out, force=force)
     report_path = report or (out or Path.cwd()) / "migration-report.md"
     report_path.parent.mkdir(parents=True, exist_ok=True)
     report_path.write_text(render_report(summary), encoding="utf-8")
@@ -531,3 +526,8 @@ def import_claude_plugin_eval(
         f"{len(summary.written)} cases written, {len(summary.existing)} skipped (already exist), "
         f"{len(summary.flags)} graders flagged; report: {report_path}"
     )
+    for error in summary.errors:
+        typer.echo(error, err=True)
+    if summary.errors:
+        typer.echo(f"{len(summary.errors)} problems; those cases were not converted", err=True)
+        raise typer.Exit(1)

@@ -381,3 +381,71 @@ class TestImportTree:
 
         assert written == tmp_path / "out/evals/p/sample" / CASE_FILENAME
         assert CaseLoader().load(written).bundle == [(tmp_path / "evals/plugins/p").as_posix()]
+
+
+def misspell_top(data: dict[str, Any]) -> str:
+    data["promt"] = "typo"
+    return "promt"
+
+
+def misspell_execution(data: dict[str, Any]) -> str:
+    data["execution"]["max_turnz"] = 3
+    return "max_turnz"
+
+
+def misspell_context(data: dict[str, Any]) -> str:
+    data["context"] = {"scaffold": "seed.sh"}
+    return "scaffold"
+
+
+def misspell_grader_option(data: dict[str, Any]) -> str:
+    data["graders"][0]["targett"] = "final"
+    return "targett"
+
+
+class TestUnknownKeys:
+    """A misspelt 1.1 key is ignored by `claude plugin eval`, so the importer must reject it."""
+
+    @pytest.mark.parametrize(
+        ("misspell", "where"),
+        [
+            (misspell_top, "<case>"),
+            (misspell_execution, "execution"),
+            (misspell_context, "context"),
+            (misspell_grader_option, "graders.0"),
+        ],
+    )
+    def test_misspelt_key_is_an_error_with_its_line(
+        self,
+        convert: Convert,
+        tmp_path: Path,
+        misspell: Callable[[dict[str, Any]], str],
+        where: str,
+    ) -> None:
+        data = case_11([routing("fires", "render")], tags=["fire"])
+        key = misspell(data)
+
+        with pytest.raises(CaseImportError) as caught:
+            convert(data)
+
+        case_file = tmp_path / "evals/p/sample/case.yaml"
+        lines = case_file.read_text().splitlines()
+        line = next(i for i, text in enumerate(lines, 1) if text.strip().startswith(f"{key}:"))
+        assert str(caught.value) == f"{case_file}:{line}: unknown key '{key}' in {where}"
+
+    def test_tree_import_reports_every_bad_case_and_writes_the_rest(
+        self, importer: ClaudePluginEvalImporter, convert: Convert, tmp_path: Path
+    ) -> None:
+        (tmp_path / "evals" / "plugins" / "p").mkdir(parents=True)
+        bad = case_11([routing("fires", "render")], tags=["fire"])
+        misspell_top(bad)
+        with pytest.raises(CaseImportError):
+            convert(bad, "evals/p/bad")
+        convert(case_11([routing("fires", "render")], tags=["fire"]))
+
+        summary = importer.import_tree([tmp_path / "evals"])
+
+        assert summary.written == [tmp_path / "evals/p/sample" / CASE_FILENAME]
+        assert [error.split(": ", 1)[1] for error in summary.errors] == [
+            "unknown key 'promt' in <case>"
+        ]

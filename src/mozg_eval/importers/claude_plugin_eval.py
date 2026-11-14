@@ -18,7 +18,7 @@ from mozg_eval.importers.claude_wire import (
     rewrite_trace,
     rewrite_write_input,
 )
-from mozg_eval.spec.loader import CASE_FILENAME
+from mozg_eval.spec.loader import CASE_FILENAME, Loc, line_map
 from mozg_eval.spec.models import SCHEMA, Case
 
 log = logging.getLogger(__name__)
@@ -45,6 +45,26 @@ _KIND_TAGS = {
 type RawCase = dict[str, Any]
 type RawGrader = dict[str, Any]
 
+# The keys `claude plugin eval` 1.1 documents; it ignores any other key without a word.
+_TOP_KEYS = frozenset(
+    {"schema_version", "name", "description", "tags", "plugins", "runs", "expected_outcome"}
+    | {"execution", "context", "graders"}
+)
+_EXECUTION_KEYS = frozenset(
+    {"prompt", "model", "max_turns", "timeout_seconds", "allowed_tools", "append_system_prompt"}
+    | {"env"}
+)
+_CONTEXT_KEYS = frozenset({"scaffold_script", "history_file", "add_dirs"})
+_GRADER_KEYS = frozenset({"name", "type", "weight", "arm"})
+_GRADER_OPTIONS = {
+    "regex": frozenset({"pattern", "flags", "match", "target"}),
+    "tool_used": frozenset({"tool", "input_match", "min", "max"}),
+    "tool_order": frozenset({"before", "after"}),
+    "file_exists": frozenset({"path", "exists"}),
+    "llm": frozenset({"criteria", "focus"}),
+    "baseline": frozenset({"baseline_file", "criteria"}),
+}
+
 
 class CaseImportError(Exception):
     """A 1.1 case that can't be converted at all."""
@@ -69,6 +89,7 @@ class Conversion:
 @dataclass
 class ImportSummary:
     written: list[Path] = field(default_factory=list)
+    errors: list[str] = field(default_factory=list)  # file:line: problem, for cases not written
     existing: list[Path] = field(default_factory=list)
     flags: list[Flag] = field(default_factory=list)
     rules: Counter[str] = field(default_factory=Counter)
@@ -82,7 +103,11 @@ class ClaudePluginEvalImporter:
         summary = ImportSummary()
         for root in roots:
             for case_file in sorted(root.rglob(SOURCE_FILENAME)):
-                conversion = self.convert(case_file)
+                try:
+                    conversion = self.convert(case_file)
+                except CaseImportError as exc:
+                    summary.errors.extend(str(exc).splitlines())
+                    continue
                 relative = case_file.parent.relative_to(root)
                 target_dir = out / root.name / relative if out else case_file.parent
                 target = target_dir / CASE_FILENAME
@@ -110,12 +135,39 @@ class ClaudePluginEvalImporter:
                 case[key] = (source_dir / case[key]).resolve().as_posix()
 
     def convert(self, case_file: Path) -> Conversion:
-        raw = yaml.safe_load(case_file.read_text(encoding="utf-8"))
+        text = case_file.read_text(encoding="utf-8")
+        raw = yaml.safe_load(text)
         if not isinstance(raw, dict) or raw.get("schema_version") != "1.1":
             raise CaseImportError(f"{case_file}: not a claude plugin eval 1.1 case")
         if (case_file.parent / "prompt.md").exists():
             raise CaseImportError(f"{case_file}: the prompt.md layout is not supported yet")
+        lines = line_map(yaml.compose(text, Loader=yaml.SafeLoader))
+        if unknown := _unknown_keys(raw, lines):
+            raise CaseImportError(
+                "\n".join(f"{case_file}:{n}: {problem}" for n, problem in unknown)
+            )
         return _CaseConverter(case_file, raw).run()
+
+
+def _unknown_keys(raw: RawCase, lines: dict[Loc, int]) -> list[tuple[int, str]]:
+    found: list[tuple[int, str]] = []
+
+    def check(mapping: object, allowed: frozenset[str], loc: Loc) -> None:
+        if not isinstance(mapping, dict):
+            return
+        where = ".".join(map(str, loc)) or "<case>"
+        for key in mapping:
+            if key not in allowed:
+                found.append((lines.get((*loc, str(key)), 1), f"unknown key '{key}' in {where}"))
+
+    check(raw, _TOP_KEYS, ())
+    check(raw.get("execution"), _EXECUTION_KEYS, ("execution",))
+    check(raw.get("context"), _CONTEXT_KEYS, ("context",))
+    for index, grader in enumerate(raw.get("graders") or []):
+        # An unknown grader type is the converter's error, with its own message.
+        if isinstance(grader, dict) and (options := _GRADER_OPTIONS.get(grader.get("type", ""))):
+            check(grader, _GRADER_KEYS | options, ("graders", index))
+    return sorted(found)
 
 
 class _CaseConverter:

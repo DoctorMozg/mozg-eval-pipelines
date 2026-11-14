@@ -220,7 +220,7 @@ mzeval import claude-plugin-eval evals/ --out migrated/
 mzeval lint migrated/
 ```
 
-The importer reads 1.1 `case.yaml` files and writes `case.mzeval.yaml` next to them, or under `--out`. The originals stay. It also writes `migration-report.md` (or `--report PATH`) with the rules it applied and any grader that needs a manual look. `--force` overwrites existing v2 files. A 1.1 `Skill` regex becomes `expect.skill`, and `Write`/`Edit` path checks become `file_changed`.
+The importer reads 1.1 `case.yaml` files and writes `case.mzeval.yaml` next to them, or under `--out`. The originals stay. It also writes `migration-report.md` (or `--report PATH`) with the rules it applied and any grader that needs a manual look. `--force` overwrites existing v2 files. A key that 1.1 doesn't document, which `claude plugin eval` would ignore without a word, is an error with its file and line: that case isn't written and the command exits 1 after checking every case. A 1.1 `Skill` regex becomes `expect.skill`, and `Write`/`Edit` path checks become `file_changed`.
 
 ## Development
 

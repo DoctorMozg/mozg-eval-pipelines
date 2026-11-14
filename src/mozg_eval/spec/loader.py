@@ -16,6 +16,24 @@ CASE_FILENAME = "case.mzeval.yaml"
 type Loc = tuple[str | int, ...]
 
 
+def line_map(node: yaml.Node | None, loc: Loc = ()) -> dict[Loc, int]:
+    """The 1-based line of every key and list item in a composed YAML tree, by its path."""
+    lines: dict[Loc, int] = {}
+    if node is None:
+        return lines
+    if isinstance(node, yaml.MappingNode):
+        for key_node, value_node in node.value:
+            child = (*loc, str(key_node.value))
+            lines[child] = key_node.start_mark.line + 1
+            lines.update(line_map(value_node, child))
+    elif isinstance(node, yaml.SequenceNode):
+        for index, item in enumerate(node.value):
+            child = (*loc, index)
+            lines[child] = item.start_mark.line + 1
+            lines.update(line_map(item, child))
+    return lines
+
+
 @dataclass(frozen=True)
 class SpecIssue:
     path: Path
@@ -39,7 +57,7 @@ class CaseLoader:
         text = path.read_text(encoding="utf-8")
         try:
             data = yaml.safe_load(text)
-            lines = self._line_map(yaml.compose(text, Loader=yaml.SafeLoader))
+            lines = line_map(yaml.compose(text, Loader=yaml.SafeLoader))
         except yaml.MarkedYAMLError as exc:
             mark = exc.problem_mark or exc.context_mark
             line = mark.line + 1 if mark else 1
@@ -104,19 +122,3 @@ class CaseLoader:
             if (*found, part) in lines:
                 found = (*found, part)
         return found
-
-    def _line_map(self, node: yaml.Node | None, loc: Loc = ()) -> dict[Loc, int]:
-        lines: dict[Loc, int] = {}
-        if node is None:
-            return lines
-        if isinstance(node, yaml.MappingNode):
-            for key_node, value_node in node.value:
-                child = (*loc, str(key_node.value))
-                lines[child] = key_node.start_mark.line + 1
-                lines.update(self._line_map(value_node, child))
-        elif isinstance(node, yaml.SequenceNode):
-            for index, item in enumerate(node.value):
-                child = (*loc, index)
-                lines[child] = item.start_mark.line + 1
-                lines.update(self._line_map(item, child))
-        return lines
