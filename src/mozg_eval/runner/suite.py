@@ -13,6 +13,8 @@ from pydantic import JsonValue
 
 from mozg_eval.drivers.protocol import Driver, Limits, TrialRequest
 from mozg_eval.events.models import End, EndStatus, Event, Payload, SkillActivated, Usage
+from mozg_eval.grading.graders import TrialGrader
+from mozg_eval.grading.models import GradeResult
 from mozg_eval.runner.checks import WorkspaceChecks, needs_workspace, snapshot
 from mozg_eval.runner.settings import resolve_settings
 from mozg_eval.runner.trial import TrialRunner, TurnGuard
@@ -35,6 +37,7 @@ class FixtureError(RuntimeError):
 class TrialSummary:
     case: str
     record: TrialRecord
+    grades: list[GradeResult]
     skills: list[str] = field(default_factory=list)
 
 
@@ -148,6 +151,9 @@ class SuiteRunner:
                 if (raw_dir / name).exists():
                     ref = ArtifactRef(run=run.id, trial=trial_id, name=name)
                     await self.stores.artifacts.put(self.ws, ref, _file_chunks(raw_dir / name))
+            raw_log = raw_dir / "raw.jsonl"
+            raw = raw_log.read_text(errors="replace") if raw_log.exists() else None
+        grades = TrialGrader(case, self.driver_name, raw).grade(events)
         status, cost = _outcome(events)
         record = TrialRecord(
             id=trial_id,
@@ -158,7 +164,9 @@ class SuiteRunner:
             driver=self.driver_name,
             status=status,
             cost_usd=cost,
+            passed=TrialGrader.passed(events, grades),
         )
         self.stores.results.add_trial(self.ws, record)
+        self.stores.results.add_grades(self.ws, trial_id, grades)
         skills = [e.payload.skill for e in events if isinstance(e.payload, SkillActivated)]
-        return TrialSummary(case=case.name, record=record, skills=skills)
+        return TrialSummary(case=case.name, record=record, grades=grades, skills=skills)

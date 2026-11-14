@@ -8,6 +8,7 @@ from pydantic import JsonValue
 
 from mozg_eval import __version__
 from mozg_eval.drivers.claude import ClaudeDriver
+from mozg_eval.grading.stats import SuiteStats
 from mozg_eval.importers.claude_plugin_eval import (
     CaseImportError,
     ClaudePluginEvalImporter,
@@ -85,9 +86,15 @@ def run(
     ],
     runs: Annotated[int | None, typer.Option(min=1, help="Repeats per case.")] = None,
     model: Annotated[str | None, typer.Option(help="Model for every case.")] = None,
+    threshold: Annotated[
+        float, typer.Option(min=0.01, max=1.0, help="Pass rate each case needs; 1.0 is every run.")
+    ] = 1.0,
     claude: Annotated[str, typer.Option(help="The claude executable.")] = "claude",
 ) -> None:
-    """Run cases on Claude Code; exit 2 if any trial ended in an error or timeout."""
+    """Run and grade cases on Claude Code.
+
+    Exit 0 when every case meets the threshold, 1 when one doesn't, 2 when a trial errored.
+    """
     files = CaseLoader.discover(paths)
     if not files:
         typer.echo(f"no {CASE_FILENAME} found under: {', '.join(map(str, paths))}", err=True)
@@ -117,12 +124,25 @@ def run(
     for trial in trials:
         cost = "n/a" if trial.record.cost_usd is None else f"${trial.record.cost_usd:.4f}"
         skills = ", ".join(trial.skills) or "none"
+        verdict = "PASS" if trial.record.passed else "FAIL"
         typer.echo(
-            f"{trial.case} #{trial.record.repeat}: {trial.record.status}, skills: {skills}, {cost}"
+            f"{verdict} {trial.case} #{trial.record.repeat}: {trial.record.status}, "
+            f"skills: {skills}, {cost}"
         )
-    typer.echo(f"run {record.id}: {len(trials)} trials")
+        for grade in trial.grades:
+            if grade.verdict == "fail":
+                typer.echo(f"    {grade.name}: {grade.detail}")
+    stats = SuiteStats.of([t.record for t in trials], threshold)
+    rate, low, high = stats.pass_rate()
+    typer.echo(
+        f"run {record.id}: {len(trials)} trials, {len(stats.cases)} cases, "
+        f"{rate:.0%} at or above {threshold:.0%} (95% CI {low:.0%}-{high:.0%})"
+    )
     if any(trial.record.status in ("error", "timeout") for trial in trials):
         raise typer.Exit(2)
+    if stats.failing():
+        typer.echo("below threshold: " + ", ".join(c.case for c in stats.failing()))
+        raise typer.Exit(1)
 
 
 @app.command()

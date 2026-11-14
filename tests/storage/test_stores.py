@@ -10,6 +10,7 @@ from alembic.migration import MigrationContext
 from sqlalchemy.exc import IntegrityError
 
 from mozg_eval.events.models import End, Event, Message
+from mozg_eval.grading.models import GradeResult
 from mozg_eval.storage.base import (
     DEFAULT_WORKSPACE,
     ArtifactNotFoundError,
@@ -197,6 +198,24 @@ class TestResultStoreContract:
         # Same ids in another workspace don't collide.
         results.add_run("b", run_record("r1"))
         assert results.list_trials("b", "r1") == []
+
+
+class TestGradeStorage:
+    def test_grades_round_trip_per_trial_and_stay_in_their_workspace(
+        self, results: ResultStore
+    ) -> None:
+        grades = [
+            GradeResult(name="expect", verdict="pass", detail="fired: x", arm="with"),
+            GradeResult(name="tests", verdict="fail", detail="exit 1", weight=2.0),
+        ]
+        results.add_run("local", run_record("r1"))
+        results.add_trial("local", trial_record("t1").model_copy(update={"passed": False}))
+        results.add_grades("local", "t1", grades)
+
+        assert results.list_grades("local", "r1") == {"t1": grades}
+        assert results.list_trials("local", "r1")[0].passed is False
+        results.ensure_workspace("b")
+        assert results.list_grades("b", "r1") == {}
 
 
 class TestSqlSchema:

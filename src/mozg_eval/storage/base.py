@@ -7,9 +7,10 @@ import uuid
 from collections.abc import AsyncIterator, Sequence
 from typing import Literal, Protocol
 
-from pydantic import AwareDatetime, NonNegativeFloat, PositiveInt, field_validator
+from pydantic import AwareDatetime, Field, NonNegativeFloat, PositiveInt, field_validator
 
 from mozg_eval.events.models import EndStatus, Event
+from mozg_eval.grading.models import GradeResult
 from mozg_eval.spec.models import StrictModel
 
 DEFAULT_WORKSPACE = "local"
@@ -71,6 +72,7 @@ class TrialRecord(StrictModel):
     driver: str
     status: EndStatus
     cost_usd: NonNegativeFloat | None = None
+    passed: bool | None = Field(default=None, description="None until the trial is graded")
 
 
 class EventStore(Protocol):
@@ -101,5 +103,9 @@ class ResultStore(Protocol):
     def add_trial(self, ws: str, trial: TrialRecord) -> None: ...
 
     def list_trials(self, ws: str, run: str) -> list[TrialRecord]: ...
+
+    def add_grades(self, ws: str, trial: str, results: Sequence[GradeResult]) -> None: ...
+
+    def list_grades(self, ws: str, run: str) -> dict[str, list[GradeResult]]: ...
 
     def close(self) -> None: ...

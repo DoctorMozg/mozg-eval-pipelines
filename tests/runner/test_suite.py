@@ -111,3 +111,21 @@ class TestRunCommand:
         *_, end, check = asyncio.run(read())
         assert isinstance(end.payload, End)
         assert check.payload == CheckResult(name="seeded", passed=True, detail="")
+
+    def test_wrong_skill_fails_the_case_and_exits_1(
+        self, suite: Path, fake_claude: Path, tmp_path: Path
+    ) -> None:
+        case = suite / "case.mzeval.yaml"
+        case.write_text(case.read_text().replace("skill: memory-note", "skill: lessons-promote"))
+
+        result = CliRunner().invoke(app, ["run", str(suite), "--claude", str(fake_claude)])
+
+        assert result.exit_code == 1, result.output
+        assert "FAIL remember-decision #1" in result.output
+        assert "expect: fired: memory-note" in result.output
+        assert "below threshold: remember-decision" in result.output
+        stores = open_stores(StorageConfig.load(tmp_path, env={}))
+        (run,) = stores.results.list_runs("local")
+        grades = stores.results.list_grades("local", run.id)
+        stores.results.close()
+        assert [g.verdict for gs in grades.values() for g in gs] == ["fail", "fail"]

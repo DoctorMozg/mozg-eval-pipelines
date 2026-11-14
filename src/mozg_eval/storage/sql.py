@@ -2,6 +2,7 @@
 
 import logging
 import sqlite3
+from collections.abc import Sequence
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -10,6 +11,7 @@ from alembic import command
 from alembic.config import Config
 from sqlalchemy.engine import Connection
 
+from mozg_eval.grading.models import GradeResult
 from mozg_eval.storage.base import DEFAULT_WORKSPACE, RunRecord, TrialRecord, check_id
 
 log = logging.getLogger(__name__)
@@ -64,8 +66,22 @@ trials = sa.Table(
     sa.Column("driver", sa.String, nullable=False),
     sa.Column("status", sa.String, nullable=False),
     sa.Column("cost_usd", sa.Float),
+    sa.Column("passed", sa.Boolean),
     sa.ForeignKeyConstraint(["workspace_id", "run_id"], ["runs.workspace_id", "runs.id"]),
     sa.Index("ix_trials_run", "workspace_id", "run_id"),
+)
+
+grades = sa.Table(
+    "grades",
+    metadata,
+    sa.Column("workspace_id", sa.String, primary_key=True),
+    sa.Column("trial_id", sa.String, primary_key=True),
+    sa.Column("name", sa.String, primary_key=True),
+    sa.Column("verdict", sa.String, nullable=False),
+    sa.Column("detail", sa.String, nullable=False),
+    sa.Column("weight", sa.Float, nullable=False),
+    sa.Column("arm", sa.String, nullable=False),
+    sa.ForeignKeyConstraint(["workspace_id", "trial_id"], ["trials.workspace_id", "trials.id"]),
 )
 
 
@@ -147,6 +163,7 @@ class SqlResultStore:
                     driver=trial.driver,
                     status=trial.status,
                     cost_usd=trial.cost_usd,
+                    passed=trial.passed,
                 )
             )
 
@@ -161,6 +178,7 @@ class SqlResultStore:
                 trials.c.driver,
                 trials.c.status,
                 trials.c.cost_usd,
+                trials.c.passed,
             )
             .where(trials.c.workspace_id == ws, trials.c.run_id == run)
             .order_by(trials.c.id)
@@ -168,3 +186,31 @@ class SqlResultStore:
         with self.engine.connect() as connection:
             rows = connection.execute(query).all()
         return [TrialRecord.model_validate(row._asdict()) for row in rows]
+
+    def add_grades(self, ws: str, trial: str, results: Sequence[GradeResult]) -> None:
+        if not results:
+            return
+        rows = [
+            {"workspace_id": ws, "trial_id": trial, **result.model_dump()} for result in results
+        ]
+        with self.engine.begin() as connection:
+            connection.execute(grades.insert(), rows)
+
+    def list_grades(self, ws: str, run: str) -> dict[str, list[GradeResult]]:
+        """Grades of every trial in the run, keyed by trial id."""
+        query = (
+            sa.select(grades)
+            .join(
+                trials,
+                (trials.c.workspace_id == grades.c.workspace_id)
+                & (trials.c.id == grades.c.trial_id),
+            )
+            .where(grades.c.workspace_id == ws, trials.c.run_id == run)
+            .order_by(grades.c.trial_id, grades.c.name)
+        )
+        found: dict[str, list[GradeResult]] = {}
+        with self.engine.connect() as connection:
+            for row in connection.execute(query).mappings():
+                result = GradeResult.model_validate({k: row[k] for k in GradeResult.model_fields})
+                found.setdefault(row["trial_id"], []).append(result)
+        return found
