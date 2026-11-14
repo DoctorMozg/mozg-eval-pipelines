@@ -224,6 +224,24 @@ class TestClaudeDriver:
         assert linked.resolve() == real_config / ".credentials.json"
         assert record["stdin"] == "Remember this decision: we use SQLite for storage."
 
+    def test_ci_runner_with_no_login_on_disk_authenticates_from_env(
+        self, run: Run, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / "no-such-dir"))
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")
+        monkeypatch.setenv("CLAUDE_CODE_OAUTH_TOKEN", "oauth-test")
+
+        events = run()
+
+        env = recorded(tmp_path)["env"]
+        assert isinstance(events[-1].payload, End)
+        assert events[-1].payload.status == "ok"
+        assert (env["ANTHROPIC_API_KEY"], env["CLAUDE_CODE_OAUTH_TOKEN"]) == (
+            "sk-test",
+            "oauth-test",
+        )
+        assert not (tmp_path / "home" / ".claude" / ".credentials.json").exists()
+
     def test_claude_that_ignores_sigterm_is_killed(
         self, run: Run, monkeypatch: pytest.MonkeyPatch
     ) -> None:
