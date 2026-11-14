@@ -11,8 +11,8 @@ from alembic import command
 from alembic.config import Config
 from sqlalchemy.engine import Connection
 
-from mozg_eval.grading.models import GradeResult
-from mozg_eval.storage.base import DEFAULT_WORKSPACE, RunRecord, TrialRecord, check_id
+from mozg_eval.grading.models import GradeResult, JudgeSpend
+from mozg_eval.storage.base import DEFAULT_WORKSPACE, RunRecord, TrialRecord, check_id, new_id
 
 log = logging.getLogger(__name__)
 
@@ -82,6 +82,22 @@ grades = sa.Table(
     sa.Column("weight", sa.Float, nullable=False),
     sa.Column("arm", sa.String, nullable=False),
     sa.ForeignKeyConstraint(["workspace_id", "trial_id"], ["trials.workspace_id", "trials.id"]),
+)
+
+
+spend_ledger = sa.Table(
+    "spend_ledger",
+    metadata,
+    sa.Column("workspace_id", sa.String, primary_key=True),
+    sa.Column("id", sa.String, primary_key=True),
+    sa.Column("trial_id", sa.String, nullable=False),
+    sa.Column("recorded_at", UtcDateTime, nullable=False),
+    sa.Column("model", sa.String, nullable=False),
+    sa.Column("input_tokens", sa.Integer, nullable=False),
+    sa.Column("output_tokens", sa.Integer, nullable=False),
+    sa.Column("cost_usd", sa.Float),
+    sa.ForeignKeyConstraint(["workspace_id", "trial_id"], ["trials.workspace_id", "trials.id"]),
+    sa.Index("ix_spend_ledger_trial", "workspace_id", "trial_id"),
 )
 
 
@@ -229,4 +245,35 @@ class SqlResultStore:
             for row in connection.execute(query).mappings():
                 result = GradeResult.model_validate({k: row[k] for k in GradeResult.model_fields})
                 found.setdefault(row["trial_id"], []).append(result)
+        return found
+
+    def add_spend(self, ws: str, trial: str, spend: Sequence[JudgeSpend]) -> None:
+        if not spend:
+            return
+        now = datetime.now(UTC)
+        rows = [
+            {"workspace_id": ws, "id": new_id(), "trial_id": trial, "recorded_at": now}
+            | item.model_dump()
+            for item in spend
+        ]
+        with self.engine.begin() as connection:
+            connection.execute(spend_ledger.insert(), rows)
+
+    def list_spend(self, ws: str, run: str) -> dict[str, list[JudgeSpend]]:
+        """Judge spend of every trial in the run, keyed by trial id, oldest first."""
+        query = (
+            sa.select(spend_ledger)
+            .join(
+                trials,
+                (trials.c.workspace_id == spend_ledger.c.workspace_id)
+                & (trials.c.id == spend_ledger.c.trial_id),
+            )
+            .where(spend_ledger.c.workspace_id == ws, trials.c.run_id == run)
+            .order_by(spend_ledger.c.id)
+        )
+        found: dict[str, list[JudgeSpend]] = {}
+        with self.engine.connect() as connection:
+            for row in connection.execute(query).mappings():
+                item = JudgeSpend.model_validate({k: row[k] for k in JudgeSpend.model_fields})
+                found.setdefault(row["trial_id"], []).append(item)
         return found

@@ -197,6 +197,7 @@ def run(
         for line in Comparison.of(by_arm["with"], by_arm["without"]).summary("with", "without"):
             typer.echo(line)
     _echo_routing(files, [t for t in trials if t.record.arm == "with"])
+    _echo_spend(trials, agents=True)
     stats = SuiteStats.of([t.record for t in trials if t.record.arm == "with"], threshold)
     rate, low, high = stats.pass_rate()
     typer.echo(
@@ -208,6 +209,24 @@ def run(
     if stats.failing():
         typer.echo("below threshold: " + ", ".join(c.case for c in stats.failing()))
         raise typer.Exit(1)
+
+
+def _total(costs: list[float | None], what: str) -> str:
+    """An unknown price is reported as such, never added in as $0."""
+    known = [c for c in costs if c is not None]
+    text = f"${sum(known):.4f} over {len(costs)} {what}"
+    if unpriced := len(costs) - len(known):
+        text += f", {unpriced} unpriced"
+    return text
+
+
+def _echo_spend(trials: list[TrialSummary], agents: bool) -> None:
+    parts = [_total([t.record.cost_usd for t in trials], "trials")] if agents else []
+    judge_costs = [s.cost_usd for t in trials for s in t.judge_spend]
+    if judge_costs:
+        parts.append("judges " + _total(judge_costs, "calls"))
+    if parts:
+        typer.echo("spend: " + "; ".join(parts))
 
 
 def _echo_routing(files: list[Path], trials: list[TrialSummary]) -> None:
@@ -265,6 +284,7 @@ def rejudge(
         for grade in trial.grades:
             if grade.name in judged:
                 typer.echo(f"    {grade.name}: {grade.verdict}, {grade.detail}")
+    _echo_spend(trials, agents=False)
     typer.echo(f"run {run_id}: rejudged {len(trials)} trials")
 
 

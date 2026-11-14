@@ -61,6 +61,7 @@ class TestRunCommand:
         assert "ok, skills: memory-note, $0.0040" in result.output
         assert "routing over 2 trials:" in result.output
         assert "memory-note: precision 1.00, recall 1.00, F1 1.00" in result.output
+        assert "spend: $0.0079 over 2 trials" in result.output
         stores = open_stores(StorageConfig.load(tmp_path, env={}))
         (run,) = stores.results.list_runs("local")
         trials = stores.results.list_trials("local", run.id)
@@ -357,6 +358,28 @@ class TestRejudge:
         assert [g.verdict for g in new] == ["pass", "fail"]
         assert new == summary.grades
         assert trial.passed is False
+
+    def test_rejudge_spend_is_added_to_the_ledger(
+        self,
+        stored_run: str,
+        suite: Path,
+        tmp_path: Path,
+        quoting_judge: Callable[..., FunctionModel],
+    ) -> None:
+        stores = open_stores(StorageConfig.load(tmp_path, env={}))
+        priced = quoting_judge("pass", model_name="claude-haiku-4-5")
+        judge = TrialJudge(CriterionJudge(priced, JudgeCache(tmp_path / "jc")), {})
+        case = CaseLoader().load(suite / "case.mzeval.yaml")
+
+        [summary] = asyncio.run(
+            Rejudger(stores, "local", judge).rejudge(stored_run, {case.name: case})
+        )
+
+        ledger = stores.results.list_spend("local", stored_run)
+        stores.results.close()
+        assert list(ledger.values()) == [summary.judge_spend]
+        (spend,) = summary.judge_spend
+        assert (spend.cost_usd or 0) > 0
 
     def test_unknown_run_and_unusable_judge_exit_2(self, stored_run: str, suite: Path) -> None:
         no_run = CliRunner().invoke(app, ["rejudge", "nope", str(suite)])

@@ -79,7 +79,7 @@ def claude_plugin(tmp_path: Path) -> Path:
 def quoting_judge() -> Callable[..., FunctionModel]:
     """A judge model giving the next of its verdicts per criterion; it quotes the evidence's end."""
 
-    def make(*verdicts: str) -> FunctionModel:
+    def make(*verdicts: str, model_name: str | None = None) -> FunctionModel:
         given: list[str] = []
 
         def answer(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -95,6 +95,6 @@ def quoting_judge() -> Callable[..., FunctionModel]:
             args = {"reasoning": "read it", "verdict": given[-1], "evidence_quote": quote}
             return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, args)])
 
-        return FunctionModel(answer)
+        return FunctionModel(answer, model_name=model_name)
 
     return make

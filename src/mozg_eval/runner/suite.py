@@ -14,7 +14,7 @@ from pydantic import JsonValue
 from mozg_eval.drivers.protocol import Driver, Limits, TrialRequest
 from mozg_eval.events.models import End, EndStatus, Event, Payload, SkillActivated, Usage
 from mozg_eval.grading.graders import TrialGrader
-from mozg_eval.grading.models import GradeResult
+from mozg_eval.grading.models import GradeResult, JudgeSpend
 from mozg_eval.grading.support import DriverSupport
 from mozg_eval.judge.grading import TrialJudge, merged
 from mozg_eval.runner.checks import WorkspaceChecks, needs_workspace, snapshot
@@ -43,6 +43,7 @@ class TrialSummary:
     record: TrialRecord
     grades: list[GradeResult]
     skills: list[str] = field(default_factory=list)
+    judge_spend: list[JudgeSpend] = field(default_factory=list)
 
 
 async def _file_chunks(path: Path) -> AsyncIterator[bytes]:
@@ -207,5 +208,6 @@ class SuiteRunner:
         )
         self.stores.results.add_trial(self.ws, record)
         self.stores.results.add_grades(self.ws, trial_id, grades)
+        self.stores.results.add_spend(self.ws, trial_id, judged.spend)
         skills = [e.payload.skill for e in events if isinstance(e.payload, SkillActivated)]
-        return TrialSummary(case=case.name, record=record, grades=grades, skills=skills)
+        return TrialSummary(case.name, record, grades, skills, judged.spend)

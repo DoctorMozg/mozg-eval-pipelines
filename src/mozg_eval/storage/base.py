@@ -10,7 +10,7 @@ from typing import Literal, Protocol
 from pydantic import AwareDatetime, Field, NonNegativeFloat, PositiveInt, field_validator
 
 from mozg_eval.events.models import EndStatus, Event
-from mozg_eval.grading.models import GradeResult
+from mozg_eval.grading.models import GradeResult, JudgeSpend
 from mozg_eval.spec.models import StrictModel
 
 DEFAULT_WORKSPACE = "local"
@@ -113,5 +113,11 @@ class ResultStore(Protocol):
     def regrade(self, ws: str, trial: str, results: Sequence[GradeResult], passed: bool) -> None:
         """Replace the trial's grades of the same names and its pass flag, all or nothing."""
         ...
+
+    def add_spend(self, ws: str, trial: str, spend: Sequence[JudgeSpend]) -> None:
+        """Append ledger rows; a rejudge adds to them, it never replaces them."""
+        ...
+
+    def list_spend(self, ws: str, run: str) -> dict[str, list[JudgeSpend]]: ...
 
     def close(self) -> None: ...

@@ -37,7 +37,8 @@ class Rejudger:
             grades = merged(stored.get(trial.id, []), judged.grades)
             passed = TrialGrader.passed(events, grades)
             results.regrade(self.ws, trial.id, judged.grades, passed)
+            results.add_spend(self.ws, trial.id, judged.spend)
             record = trial.model_copy(update={"passed": passed})
-            summaries.append(TrialSummary(case=trial.case, record=record, grades=grades))
+            summaries.append(TrialSummary(trial.case, record, grades, judge_spend=judged.spend))
         log.info("rejudged %d of %d trials in run %s", len(summaries), len(trials), run_id)
         return summaries

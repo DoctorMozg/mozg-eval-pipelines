@@ -10,7 +10,7 @@ from alembic.migration import MigrationContext
 from sqlalchemy.exc import IntegrityError
 
 from mozg_eval.events.models import End, Event, Message
-from mozg_eval.grading.models import GradeResult
+from mozg_eval.grading.models import GradeResult, JudgeSpend
 from mozg_eval.storage.base import (
     DEFAULT_WORKSPACE,
     ArtifactNotFoundError,
@@ -301,3 +301,17 @@ class TestStorageConfig:
         with pytest.raises(ValueError, match="supported so far") as error:
             open_stores(config)
         assert "secret" not in str(error.value)
+
+    def test_spend_appends_per_trial_and_stays_in_its_workspace(self, results: ResultStore) -> None:
+        first = JudgeSpend(model="m", input_tokens=10, output_tokens=2, cost_usd=0.001)
+        unpriced = JudgeSpend(model="m", input_tokens=5, output_tokens=1, cost_usd=None)
+        results.add_run("local", run_record("r1"))
+        results.add_trial("local", trial_record("t1"))
+        results.add_spend("local", "t1", [first])
+        results.add_spend("local", "t1", [unpriced])
+
+        assert results.list_spend("local", "r1") == {"t1": [first, unpriced]}
+        results.ensure_workspace("b")
+        assert results.list_spend("b", "r1") == {}
+        with pytest.raises(IntegrityError):
+            results.add_spend("local", "nope", [first])
