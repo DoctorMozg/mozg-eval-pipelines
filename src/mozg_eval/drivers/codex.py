@@ -13,6 +13,7 @@ from pydantic import BaseModel, JsonValue, ValidationError
 
 from mozg_eval.drivers import process
 from mozg_eval.drivers.claude_plugins import PluginRenderError
+from mozg_eval.drivers.codex_harness import CodexHarness
 from mozg_eval.drivers.codex_plugins import MARKETPLACE, CodexMarketplace
 from mozg_eval.drivers.process import ChildProcess
 from mozg_eval.drivers.protocol import MAX_TURNS_REASON, AgentError, Capabilities, TrialRequest
@@ -28,6 +29,7 @@ from mozg_eval.events.models import (
     ToolResult,
     Usage,
 )
+from mozg_eval.spec.harness import HarnessLoader
 from mozg_eval.spec.models import ToolKind
 
 log = logging.getLogger(__name__)
@@ -35,7 +37,7 @@ log = logging.getLogger(__name__)
 # Codex shows skills to the model as files; reading one from the installed plugin is the only
 # trace of a skill being used.
 _SKILL_READ = re.compile(
-    rf"/plugins/cache/{MARKETPLACE}/[^/\s]+/[^/\s]+/skills/([^/\s'\"]+)/SKILL\.md"
+    rf"(?:/plugins/cache/{MARKETPLACE}/[^/\s]+/[^/\s]+|/\.agents)/skills/([^/\s'\"]+)/SKILL\.md"
 )
 # Codex repeats this notice on every run that passes the flag; it is not a failure.
 _HOOK_TRUST_NOTICE = "--dangerously-bypass-hook-trust"
@@ -263,6 +265,7 @@ class CodexDriver:
         isolation="home",
         tools=["shell", "edit", "subagent"],
         tool_input=["shell"],
+        harness=["instructions", "skills", "agents", "hooks", "mcp", "plugins"],
     )
 
     def __init__(self, home: Path, raw_dir: Path, executable: str = "codex") -> None:
@@ -301,6 +304,9 @@ class CodexDriver:
         self.raw_dir.mkdir(parents=True, exist_ok=True)
         env = self._prepare_home() | request.env
         env["MZEVAL_HOOK_LOG"] = str(self.raw_dir / "hooks.jsonl")
+        if request.harness:
+            harness = HarnessLoader().load(Path(request.harness))
+            CodexHarness(harness).materialize(self.home, Path(request.workspace), env)
         if request.tools is not None:
             tools = ", ".join(request.tools)
             yield Log(level="info", text=f"codex offers its own tools; [{tools}] is not enforced")

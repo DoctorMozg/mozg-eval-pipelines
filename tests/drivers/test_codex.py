@@ -108,6 +108,14 @@ class TestNormalize:
 
         assert sum(isinstance(e, SkillActivated) for e in events) == 1
 
+    def test_reading_a_user_skill_activates_it(self) -> None:
+        user_skill = "/tmp/mzeval-trial/home/.agents/skills/changelog/SKILL.md"
+        events = completed(
+            CodexStream(10), id="a", type="command_execution", command=f"cat {user_skill}"
+        )
+
+        assert SkillActivated(skill="changelog", evidence="inferred") in events
+
     def test_hook_trust_notice_is_dropped_and_other_item_errors_are_warnings(self) -> None:
         stream = CodexStream(10)
         notice = "`--dangerously-bypass-hook-trust` is enabled. Enabled hooks may run"
@@ -167,7 +175,9 @@ class TestHookLog:
 
 
 class Run(Protocol):
-    def __call__(self, mode: str = "replay", timeout_s: int = 30, **env: str) -> list[Event]: ...
+    def __call__(
+        self, mode: str = "replay", timeout_s: int = 30, harness: Path | None = None, **env: str
+    ) -> list[Event]: ...
 
 
 @pytest.fixture
@@ -185,7 +195,9 @@ def run(tmp_path: Path, real_codex: Path, fake_codex: Path, claude_plugin: Path)
     workspace = tmp_path / "ws"
     workspace.mkdir()
 
-    def go(mode: str = "replay", timeout_s: int = 30, **env: str) -> list[Event]:
+    def go(
+        mode: str = "replay", timeout_s: int = 30, harness: Path | None = None, **env: str
+    ) -> list[Event]:
         request = TrialRequest(
             trial="t1",
             prompt="/notes:note pin SQLite",
@@ -199,6 +211,7 @@ def run(tmp_path: Path, real_codex: Path, fake_codex: Path, claude_plugin: Path)
             plugins=[str(claude_plugin)],
             tools=["skill"],
             model="gpt-6.1-sol",
+            harness=str(harness) if harness else None,
             limits=Limits(max_turns=4, timeout_s=timeout_s),
         )
         driver = CodexDriver(tmp_path / "home", tmp_path / "raw", executable=str(fake_codex))
@@ -238,6 +251,18 @@ class TestCodexDriver:
         assert record["stdin"].startswith("Use the $note skill from notes.")
         assert "--model=gpt-6.1-sol" in record["argv"]
         assert record["argv"][-1] == "-"
+
+    def test_harness_is_written_into_the_trial_home(self, run: Run, tmp_path: Path) -> None:
+        root = tmp_path / "harness"
+        (root / "instructions").mkdir(parents=True)
+        (root / "harness.mzeval.yaml").write_text("schema: mzeval-harness/1\nname: demo\n")
+        (root / "instructions" / "style.md").write_text("Comments say why.\n")
+
+        run(harness=root)
+
+        codex_home = tmp_path / "home" / ".codex"
+        assert (codex_home / "AGENTS.md").read_text() == "Comments say why.\n"
+        assert "[skills.bundled]\nenabled = false" in (codex_home / "config.toml").read_text()
 
     def test_plugins_are_installed_before_the_run(self, run: Run, tmp_path: Path) -> None:
         run()

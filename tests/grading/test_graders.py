@@ -22,6 +22,7 @@ from mozg_eval.events.models import (
 from mozg_eval.grading.graders import TrialGrader
 from mozg_eval.grading.models import GradeResult, Verdict
 from mozg_eval.grading.support import DriverSupport
+from mozg_eval.spec.harness import HarnessLoader
 from mozg_eval.spec.models import Case
 
 SKILL_FIRE = Path(__file__).parents[1] / "drivers" / "fixtures" / "claude_skill_fire.jsonl"
@@ -275,6 +276,21 @@ class TestDriverSupport:
             "n/a",
             "bare reports no skill activations",
         )
+
+    def test_harness_gap_names_each_part_the_driver_cannot_load(self, tmp_path: Path) -> None:
+        root = tmp_path / "rules"
+        (root / "skills" / "demo").mkdir(parents=True)
+        (root / "instructions").mkdir()
+        (root / "harness.mzeval.yaml").write_text("schema: mzeval-harness/1\nname: rules\n")
+        (root / "instructions" / "style.md").write_text("Comments say why.\n")
+        (root / "skills" / "demo" / "SKILL.md").write_text("---\nname: demo\n---\n")
+        harness = HarnessLoader().load(root)
+
+        partial = DriverSupport("partial", Capabilities(harness=["instructions"]))
+        full = DriverSupport("full", Capabilities(harness=["instructions", "skills"]))
+
+        assert partial.harness_gap(harness) == "partial can't load harness rules: skills"
+        assert full.harness_gap(harness) is None
 
     def test_case_is_applicable_when_one_assertion_can_be_answered(self) -> None:
         only_subagent = case(graders=[{"name": "s", "type": "subagent", "subagent": "x"}])

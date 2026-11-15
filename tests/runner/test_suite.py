@@ -746,16 +746,6 @@ class TestHarness:
         assert result.exit_code == 0, result.output
         assert "plan: 2 cases, 4 trials" in result.output
 
-    def test_driver_that_cannot_load_a_part_stops_before_any_trial(
-        self, evals: Path, rules: Path
-    ) -> None:
-        argv = ["plan", str(evals), "--driver", "codex", "--harness", str(rules)]
-
-        result = CliRunner().invoke(app, argv)
-
-        assert result.exit_code == 2
-        assert "codex can't load harness rules: instructions" in result.output
-
     def test_same_harness_twice_exits_2(self, evals: Path, rules: Path) -> None:
         result = CliRunner().invoke(
             app, ["plan", str(evals), "--harness", str(rules), "--harness", str(rules)]
