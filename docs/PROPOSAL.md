@@ -581,7 +581,9 @@ The paid Agent run (6 trials) found two more. `claude -p` exits 1 after any erro
 routing case that stopped at its own max_turns also logged a spurious exit-code error; that error
 now appears only when no result arrived. And the linked login loaded the account's claude.ai
 connectors into the trial, where a subagent used one; the Claude driver now sets
-`ENABLE_CLAUDEAI_MCP_SERVERS=false`, which keeps the plugins' own MCP servers.
+`ENABLE_CLAUDEAI_MCP_SERVERS=false`, which keeps the plugins' own MCP servers. Claude now also
+reports UserPromptSubmit hooks, so a 1.1 hook regex can name its event with `"hook_event":"X"`, and
+the importer turns that into the `hook_fired` grader's `event`.
 
 ### 4.11 Runner: a thin executor, run locally or in CI
 

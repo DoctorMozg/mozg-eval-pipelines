@@ -8,6 +8,8 @@ from dataclasses import dataclass, field
 from typing import Any
 
 _HOOK = '"subtype":"hook_response"[^\\n]*'
+# Claude writes hook_event before the hook's stdout, so a pattern can name the event first.
+_HOOK_EVENT = re.compile(r'"hook_event":"(?P<event>\w+)"(?:\[\^\\n\]\*)?')
 _TOOL_RESULT = '"type":"tool_result"[^\\n]*'
 _REPLY_PREFIXES = (
     '"role":"assistant","content":\\[\\{"type":"text","text":"',
@@ -99,10 +101,14 @@ def rewrite_trace(pattern: str) -> Rewrite | None:
     """A 1.1 `regex target: trace` as portable graders, or None to keep it Claude-only."""
     if pattern.startswith(_HOOK):
         # Hook stdout keeps its own JSON escaping, which `\\+n`-style patterns already allow for.
-        return Rewrite(
-            "trace hook_response -> hook_fired",
-            [{"type": "hook_fired", "match": pattern.removeprefix(_HOOK)}],
-        )
+        rest = pattern.removeprefix(_HOOK)
+        hook: dict[str, Any] = {"type": "hook_fired"}
+        if named := _HOOK_EVENT.match(rest):
+            hook["event"] = named["event"]
+            rest = rest[named.end() :]
+        if rest:
+            hook["match"] = rest
+        return Rewrite("trace hook_response -> hook_fired", [hook])
     if pattern.startswith(_TOOL_RESULT):
         body = _unjson(pattern.removeprefix(_TOOL_RESULT))
         return Rewrite(

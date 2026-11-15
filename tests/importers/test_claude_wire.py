@@ -14,6 +14,14 @@ class TestTraceShapes:
                 {"type": "hook_fired", "match": "Advice[^\\\\]*\\\\+n- [I-0001]"},
             ),
             (
+                '"subtype":"hook_response"[^\\n]*"hook_event":"SessionStart"[^\\n]*OPAL-19',
+                {"type": "hook_fired", "event": "SessionStart", "match": "OPAL-19"},
+            ),
+            (
+                '"subtype":"hook_response"[^\\n]*"hook_event":"UserPromptSubmit"',
+                {"type": "hook_fired", "event": "UserPromptSubmit"},
+            ),
+            (
                 '"type":"tool_result"[^\\n]*kestrel-east',
                 {"type": "regex", "target": "tool_results", "pattern": "kestrel-east"},
             ),
