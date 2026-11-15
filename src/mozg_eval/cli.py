@@ -22,6 +22,7 @@ from mozg_eval.grading.models import GradeResult
 from mozg_eval.grading.routing import RoutedTrial, Routing
 from mozg_eval.grading.stats import SuiteStats
 from mozg_eval.grading.support import DriverSupport
+from mozg_eval.importers.claude_harness import ClaudeHarnessImporter, ClaudePart
 from mozg_eval.importers.claude_plugin_eval import (
     ClaudePluginEvalImporter,
     render_report,
@@ -76,6 +77,14 @@ DRIVERS: dict[DriverName, type[ClaudeDriver | CodexDriver | OpenCodeDriver | PiD
 
 import_app = typer.Typer(help="Convert cases from other eval tools.", no_args_is_help=True)
 app.add_typer(import_app, name="import")
+harness_app = typer.Typer(
+    help="Work with harnesses, the setup an agent runs with.", no_args_is_help=True
+)
+app.add_typer(harness_app, name="harness")
+harness_import_app = typer.Typer(
+    help="Make a harness from an agent's own config.", no_args_is_help=True
+)
+harness_app.add_typer(harness_import_app, name="import")
 
 # `--harness none` stands for the agent's own setup, so it can be the baseline of an A/B run.
 NO_HARNESS = "none"
@@ -662,3 +671,45 @@ def import_claude_plugin_eval(
     if summary.errors:
         typer.echo(f"{len(summary.errors)} problems; those cases were not converted", err=True)
         raise typer.Exit(1)
+
+
+@harness_import_app.command("claude")
+def import_claude_harness(
+    dest: Annotated[Path, typer.Argument(help="New or empty directory for the harness.")],
+    name: Annotated[
+        str | None, typer.Option(help="Harness name; defaults to the directory name.")
+    ] = None,
+    source: Annotated[
+        Path | None,
+        typer.Option(
+            exists=True,
+            file_okay=False,
+            help="Claude config dir; default $CLAUDE_CONFIG_DIR or ~/.claude.",
+        ),
+    ] = None,
+    part: Annotated[
+        list[ClaudePart] | None,
+        typer.Option("--part", help="Copy only this part; repeatable. Default: all of them."),
+    ] = None,
+) -> None:
+    """Copy CLAUDE.md, rules, skills, agents and hooks into a harness.
+
+    Logins, history, projects/, .claude.json and settings other than hooks are never copied;
+    MCP servers and plugins go into harness.mzeval.yaml by hand.
+    """
+    config = source or Path(os.environ.get("CLAUDE_CONFIG_DIR", Path.home() / ".claude"))
+    importer = ClaudeHarnessImporter(config, Path.home())
+    try:
+        summary = importer.run(dest, name or dest.name, part or list(ClaudePart))
+    except FileExistsError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(2) from exc
+    except HarnessLoadError as exc:
+        for issue in exc.issues:
+            typer.echo(str(issue), err=True)
+        raise typer.Exit(2) from exc
+    for warning in summary.warnings:
+        typer.echo(f"warning: {warning}", err=True)
+    copied = ", ".join(f"{count} {kind}" for kind, count in summary.copied.items())
+    typer.echo(f"harness {name or dest.name} at {dest}: {copied}")
+    typer.echo("MCP servers and plugins aren't imported; add them to " + HARNESS_FILENAME)
