@@ -2,37 +2,16 @@
 
 import json
 import logging
-import re
 import shutil
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
+from mozg_eval.drivers.harness_parts import agent_name, expand_env, hooks_of, skill_name
 from mozg_eval.drivers.protocol import AgentError
-from mozg_eval.spec.harness import Harness, HttpServer, read_frontmatter
+from mozg_eval.spec.harness import Harness, HttpServer
 
 log = logging.getLogger(__name__)
-
-# Hook commands name the harness's own scripts through this token, as plugins use theirs.
-HARNESS_ROOT = "${HARNESS_ROOT}"
-_ENV_REF = re.compile(r"\$\{([A-Z][A-Z0-9_]*)\}")
-
-
-def expand_env(value: str, env: Mapping[str, str]) -> str:
-    """Fills `${VAR}` from the environment, so a harness file never has to hold a secret."""
-
-    def fill(match: re.Match[str]) -> str:
-        name = match[1]
-        if name not in env:
-            raise AgentError(f"harness needs ${{{name}}}, which the environment doesn't set")
-        return env[name]
-
-    return _ENV_REF.sub(fill, value)
-
-
-def _skill_name(folder: Path) -> str:
-    meta, _ = read_frontmatter(folder / "SKILL.md")
-    return str(meta.get("name") or folder.name)
 
 
 class ClaudeHarness:
@@ -59,9 +38,7 @@ class ClaudeHarness:
         log.info("harness %s written to %s", harness.name, config)
 
     def _merge_hooks(self, settings_path: Path) -> None:
-        assert self.harness.hooks is not None
-        text = self.harness.hooks.read_text(encoding="utf-8")
-        hooks = json.loads(text.replace(HARNESS_ROOT, str(self.harness.root.resolve())))["hooks"]
+        hooks = hooks_of(self.harness)
         settings = _read_json(settings_path)
         merged: dict[str, list[Any]] = settings.setdefault("hooks", {})
         for event, matchers in hooks.items():
@@ -93,10 +70,9 @@ class ClaudeHarness:
         agents = set(init.get("agents") or [])
         status = {s.get("name"): s.get("status") for s in init.get("mcp_servers") or []}
         gone = [
-            f"skill {name}" for name in map(_skill_name, self.harness.skills) if name not in skills
+            f"skill {name}" for name in map(skill_name, self.harness.skills) if name not in skills
         ]
-        for path in self.harness.agents:
-            name = str(read_frontmatter(path)[0]["name"])
+        for name in map(agent_name, self.harness.agents):
             if name not in agents:
                 gone.append(f"subagent {name}")
         for name in self.harness.manifest.mcp:

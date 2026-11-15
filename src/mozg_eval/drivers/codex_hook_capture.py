@@ -1,7 +1,8 @@
 """Runs one plugin hook for Codex and logs it, since `codex exec --json` records no hook events.
 
-Usage: codex_hook_capture.py <plugin> <event> <key>. Codex sets PLUGIN_ROOT; the driver sets
-MZEVAL_HOOK_LOG. The hook's stdout, stderr and exit code pass through unchanged.
+Usage: codex_hook_capture.py <owner> <event> <key> [commands.json]. Without the commands file
+it is read from the plugin under PLUGIN_ROOT, which Codex sets for plugin hooks only. The driver
+sets MZEVAL_HOOK_LOG. The hook's stdout, stderr and exit code pass through unchanged.
 """
 
 import fcntl
@@ -14,8 +15,11 @@ from pathlib import Path
 
 def main() -> int:
     plugin, event, key = sys.argv[1:4]
-    root = Path(os.environ["PLUGIN_ROOT"])
-    command = json.loads((root / "hooks" / ".mzeval-hook-commands.json").read_text())[key]
+    if len(sys.argv) > 4:
+        commands = Path(sys.argv[4])
+    else:
+        commands = Path(os.environ["PLUGIN_ROOT"]) / "hooks" / ".mzeval-hook-commands.json"
+    command = json.loads(commands.read_text())[key]
     stdin = sys.stdin.read()
     result = subprocess.run(command, shell=True, input=stdin, capture_output=True, text=True)
     record = {

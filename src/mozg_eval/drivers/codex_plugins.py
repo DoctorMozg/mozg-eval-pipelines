@@ -6,8 +6,7 @@ import shutil
 import sys
 from collections.abc import Sequence
 from pathlib import Path
-
-from pydantic import JsonValue
+from typing import Any
 
 from mozg_eval.drivers.claude_plugins import (
     IGNORED,
@@ -78,25 +77,38 @@ class CodexMarketplace:
         if not path.is_file():
             return
         config = json.loads(path.read_text(encoding="utf-8"))
-        originals: dict[str, str] = {}
-        for event, groups in config.get("hooks", {}).items():
-            for g, group in enumerate(groups):
-                if "matcher" in group:
-                    group["matcher"] = _rename_matcher(group["matcher"])
-                kept: list[dict[str, JsonValue]] = []
-                for h, handler in enumerate(group.get("hooks", [])):
-                    if (kind := handler.get("type")) != "command":
-                        log.warning("plugin %s: %s hook of type %s dropped", name, event, kind)
-                        continue
-                    key = f"{event}:{g}:{h}"
-                    originals[key] = handler["command"]
-                    handler["command"] = _capture_command(name, event, key)
-                    kept.append(handler)
-                group["hooks"] = kept
+        originals = instrument_hooks(config.get("hooks", {}), name)
         (plugin / "hooks" / HOOK_COMMANDS).write_text(json.dumps(originals))
         path.write_text(json.dumps(config))
 
 
-def _capture_command(plugin: str, event: str, key: str) -> str:
-    args: Sequence[str] = (sys.executable, str(CAPTURE), plugin, event, key)
+def instrument_hooks(
+    hooks: dict[str, list[Any]], owner: str, commands: Path | None = None
+) -> dict[str, str]:
+    """Point each command hook at the capture script, in place; returns the originals by key.
+
+    Plugin hooks find `commands` through PLUGIN_ROOT, so only other hooks pass its path.
+    """
+    originals: dict[str, str] = {}
+    for event, groups in hooks.items():
+        for g, group in enumerate(groups):
+            if "matcher" in group:
+                group["matcher"] = _rename_matcher(group["matcher"])
+            kept: list[dict[str, Any]] = []
+            for h, handler in enumerate(group.get("hooks", [])):
+                if (kind := handler.get("type")) != "command":
+                    log.warning("%s: %s hook of type %s dropped", owner, event, kind)
+                    continue
+                key = f"{event}:{g}:{h}"
+                originals[key] = handler["command"]
+                handler["command"] = _capture_command(owner, event, key, commands)
+                kept.append(handler)
+            group["hooks"] = kept
+    return originals
+
+
+def _capture_command(owner: str, event: str, key: str, commands: Path | None) -> str:
+    args: Sequence[str] = (sys.executable, str(CAPTURE), owner, event, key)
+    if commands is not None:
+        args = (*args, str(commands))
     return " ".join(f'"{arg}"' for arg in args)

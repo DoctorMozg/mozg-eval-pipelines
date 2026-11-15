@@ -3,7 +3,8 @@ from pathlib import Path
 
 import pytest
 
-from mozg_eval.drivers.claude_harness import ClaudeHarness, expand_env
+from mozg_eval.drivers.claude_harness import ClaudeHarness
+from mozg_eval.drivers.harness_parts import expand_env
 from mozg_eval.drivers.protocol import AgentError
 from mozg_eval.spec.harness import HARNESS_FILENAME, Harness, HarnessLoader
 
