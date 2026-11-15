@@ -80,7 +80,9 @@ class TestPrompt:
 
 
 class Run(Protocol):
-    def __call__(self, tools: list[ToolKind] | None = None, **env: str) -> list[Event]: ...
+    def __call__(
+        self, tools: list[ToolKind] | None = None, harness: Path | None = None, **env: str
+    ) -> list[Event]: ...
 
 
 @pytest.fixture
@@ -92,7 +94,9 @@ def run(
     workspace = tmp_path / "ws"
     workspace.mkdir()
 
-    def go(tools: list[ToolKind] | None = None, **env: str) -> list[Event]:
+    def go(
+        tools: list[ToolKind] | None = None, harness: Path | None = None, **env: str
+    ) -> list[Event]:
         request = TrialRequest(
             trial="t1",
             prompt="/notes:note pin SQLite",
@@ -105,6 +109,7 @@ def run(
             plugins=[str(claude_plugin)],
             tools=["skill"] if tools is None else tools,
             model="openrouter/anthropic/claude-haiku-5.5",
+            harness=str(harness) if harness else None,
             limits=Limits(max_turns=10, timeout_s=30),
         )
         driver = OpenCodeDriver(tmp_path / "home", tmp_path / "raw", executable=str(fake_agent))
@@ -170,6 +175,24 @@ class TestOpenCodeDriver:
             {"action": "*", "resource": "*", "effect": "deny"},
             {"action": "edit", "resource": "*", "effect": "allow"},
             {"action": "skill", "resource": "*", "effect": "allow"},
+        ]
+
+    def test_case_tool_rules_come_after_the_harness_rules(self, run: Run, tmp_path: Path) -> None:
+        root = tmp_path / "harness"
+        (root / "native" / "opencode").mkdir(parents=True)
+        (root / "harness.mzeval.yaml").write_text("schema: mzeval-harness/1\nname: demo\n")
+        native = {
+            "model": "x/y",
+            "permissions": [{"action": "*", "resource": "*", "effect": "allow"}],
+        }
+        (root / "native" / "opencode" / "opencode.json").write_text(json.dumps(native))
+
+        run(tools=[], harness=root)
+
+        assert config(tmp_path)["model"] == "x/y"
+        assert config(tmp_path)["permissions"] == [
+            {"action": "*", "resource": "*", "effect": "allow"},
+            {"action": "*", "resource": "*", "effect": "deny"},
         ]
 
     def test_empty_tools_deny_everything(self, run: Run, tmp_path: Path) -> None:

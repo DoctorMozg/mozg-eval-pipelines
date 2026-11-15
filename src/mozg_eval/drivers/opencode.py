@@ -7,10 +7,12 @@ import os
 import re
 from collections.abc import AsyncIterator, Mapping
 from pathlib import Path
+from typing import Any
 
 from pydantic import BaseModel, JsonValue, ValidationError
 
 from mozg_eval.drivers.claude_plugins import PluginCopies, PluginRenderError
+from mozg_eval.drivers.opencode_harness import OpenCodeHarness, merge_json
 from mozg_eval.drivers.process import ChildProcess
 from mozg_eval.drivers.protocol import MAX_TURNS_REASON, AgentError, Capabilities, TrialRequest
 from mozg_eval.events.models import (
@@ -24,6 +26,7 @@ from mozg_eval.events.models import (
     ToolResult,
     Usage,
 )
+from mozg_eval.spec.harness import HarnessLoader
 from mozg_eval.spec.models import ToolKind
 
 log = logging.getLogger(__name__)
@@ -163,6 +166,8 @@ class OpenCodeDriver:
         isolation="home",
         host_shell=False,
         tools=sorted(set(OPENCODE_TOOLS.values())),
+        # OpenCode 2 hooks are TypeScript plugins, which only a native/opencode folder holds.
+        harness=["instructions", "skills", "agents", "mcp", "plugins"],
     )
 
     def __init__(self, home: Path, raw_dir: Path, executable: str = "opencode") -> None:
@@ -189,8 +194,13 @@ class OpenCodeDriver:
 
     async def run(self, request: TrialRequest) -> AsyncIterator[Payload]:
         self.raw_dir.mkdir(parents=True, exist_ok=True)
+        env = self._env() | request.env
+        harness_config: dict[str, Any] = {}
+        if request.harness:
+            harness = OpenCodeHarness(HarnessLoader().load(Path(request.harness)))
+            harness_config = harness.materialize(self._config_dir(), env)
         try:
-            self._write_config(request)
+            self._write_config(request, harness_config)
         except PluginRenderError as exc:
             yield Error(message=str(exc))
             yield End(status="error", reason="plugin copy failed")
@@ -200,7 +210,7 @@ class OpenCodeDriver:
         stream = OpenCodeStream(request.limits.max_turns)
         ended = False
         async for raw_line in self._child.lines(
-            self.command(request), cwd=request.workspace, env=self._env() | request.env
+            self.command(request), cwd=request.workspace, env=env
         ):
             if ended:
                 continue
@@ -231,7 +241,11 @@ class OpenCodeDriver:
     def _env(self) -> dict[str, str]:
         return isolated_env(os.environ, self.home)
 
-    def _write_config(self, request: TrialRequest) -> None:
+    def _config_dir(self) -> Path:
+        return self.home / ".config" / "opencode"
+
+    def _write_config(self, request: TrialRequest, harness_config: dict[str, Any]) -> None:
+        """The case's config goes last, so its tool rules override the harness's."""
         copies = PluginCopies(self.home / ".mzeval-plugins")
         skills: list[JsonValue] = [
             str(copies.add(Path(plugin)) / "skills") for plugin in request.plugins
@@ -243,7 +257,7 @@ class OpenCodeDriver:
             rules: list[JsonValue] = [{"action": "*", "resource": "*", "effect": "deny"}]
             rules += [{"action": a, "resource": "*", "effect": "allow"} for a in allowed]
             config["permissions"] = rules
-        path = self.home / ".config" / "opencode" / "opencode.json"
+        path = self._config_dir() / "opencode.json"
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps(config))
+        path.write_text(json.dumps(merge_json(harness_config, config)))
         log.debug("opencode config for %d plugins at %s", len(skills), path)
