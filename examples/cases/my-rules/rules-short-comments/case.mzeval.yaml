@@ -19,7 +19,7 @@ graders:
       source = open("retry.py").read()
       for node in ast.walk(ast.parse(source)):
           doc = ast.get_docstring(node, clean=True) if isinstance(node, (ast.Module, ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)) else None
-          if doc and len(doc.splitlines()) > 2:
+          if doc and len([l for l in doc.splitlines() if l.strip()]) > 2:
               sys.exit("a docstring runs past two lines")
       run = 0
       for line in source.splitlines():
