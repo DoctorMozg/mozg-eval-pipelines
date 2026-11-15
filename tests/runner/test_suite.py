@@ -444,7 +444,8 @@ class TestJobs:
 
 class TestSpendCap:
     # The replayed run reports $0.00396366, so a cap of $0.005 lets one trial finish under it.
-    def test_trial_that_crosses_the_cap_is_cancelled_and_the_rest_never_start(
+    # Claude reports cost on its last line, so the trial that crosses the cap has already finished.
+    def test_trial_that_crosses_the_cap_is_graded_and_the_rest_never_start(
         self, suite: Path, fake_claude: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         spans = tmp_path / "spans.txt"
@@ -455,7 +456,7 @@ class TestSpendCap:
 
         assert result.exit_code == 2, result.output
         assert len(spans.read_text().splitlines()) == 2
-        assert "remember-decision #2: cancelled" in result.output
+        assert "PASS remember-decision #2: ok" in result.output
         assert "spend cap $0.005 reached: 1 trials not started" in result.output
 
     def test_run_under_the_cap_is_graded_as_usual(self, suite: Path, fake_claude: Path) -> None:

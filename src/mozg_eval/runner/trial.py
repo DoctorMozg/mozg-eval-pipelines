@@ -153,8 +153,9 @@ class TrialRunner:
         task.add_done_callback(self._pending.discard)
 
     def _end(self, driver_end: End | None) -> End:
-        # The core's reason to stop outranks whatever status the driver reported after the cancel.
-        if self._stop is not None:
+        # A clean end means the agent finished before the stop could cut it, as when Claude's
+        # cost, reported on its last line, crosses the cap; otherwise the core's reason wins.
+        if self._stop is not None and not (driver_end is not None and driver_end.status == "ok"):
             status, reason = self._stop
             log.info("trial stopped: %s", reason)
             return End(status=status, reason=reason)
