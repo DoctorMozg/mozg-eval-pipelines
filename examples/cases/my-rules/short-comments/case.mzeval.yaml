@@ -1,0 +1,29 @@
+schema: mzeval/2
+name: rules-short-comments
+description: personal-code-style keeps every comment and docstring to one or two lines.
+kind: behaviour
+tags: [my-rules]
+execution:
+  prompt: Write retry(fn, attempts) in retry.py that calls fn until it succeeds, with exponential backoff between tries. Document it.
+  tools: [read, write, edit, shell]
+  max_turns: 8
+graders:
+  - name: file-written
+    type: file_exists
+    path: retry.py
+  - name: comments-two-lines-at-most
+    type: command
+    run: |
+      python3 - <<'PY'
+      import ast, sys
+      source = open("retry.py").read()
+      for node in ast.walk(ast.parse(source)):
+          doc = ast.get_docstring(node, clean=True) if isinstance(node, (ast.Module, ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)) else None
+          if doc and len(doc.splitlines()) > 2:
+              sys.exit("a docstring runs past two lines")
+      run = 0
+      for line in source.splitlines():
+          run = run + 1 if line.strip().startswith("#") else 0
+          if run > 2:
+              sys.exit("a comment runs past two lines")
+      PY

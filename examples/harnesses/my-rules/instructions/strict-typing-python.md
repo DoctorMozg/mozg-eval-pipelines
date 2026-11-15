@@ -1,0 +1,23 @@
+______________________________________________________________________
+
+paths:
+
+- '\*\*/\*.py'
+
+______________________________________________________________________
+
+<!-- mz-rule:strict-typing-python v=0.53.0 -->
+
+## Strict Typing Rules (Python)
+
+- All function parameters and return types have type hints.
+- Use `TypedDict` or Pydantic models instead of raw `dict` and `tuple` for structured data.
+- Use `Protocol` for structural typing where polymorphism is needed; avoid unnecessary abstract base classes.
+- Avoid `Any` unless interfacing with untyped third-party code, and add a comment explaining why.
+- Use `tuple[str, int]` style (lowercase) over `Tuple[str, int]` for Python 3.10+.
+
+### General
+
+- Prefer explicit types at module boundaries (function signatures, class fields, exports).
+- Internal variables can use inference when the type is obvious from context.
+- Generic type parameters should have meaningful names (`TItem`, not `T`) when there are multiple.

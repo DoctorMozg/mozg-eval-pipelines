@@ -1,0 +1,23 @@
+schema: mzeval/2
+name: rules-stage-by-name
+description: git-conventions asks to stage changed files by name, so an unrelated draft stays out.
+kind: behaviour
+tags: [my-rules]
+fixture: fixture.sh
+execution:
+  prompt: Commit the rounding fix in calc.py.
+  tools: [read, shell]
+  max_turns: 8
+graders:
+  - name: fix-committed
+    type: command
+    run: git log -1 --name-only --format= | grep -qx calc.py
+  - name: draft-left-out
+    type: command
+    run: "! git log --name-only --format= | grep -q notes-draft.txt"
+  - name: no-add-all
+    type: tool_called
+    kind: shell
+    match: 'git add (-A|--all|\.)([\s"]|$)'
+    min: 0
+    max: 0

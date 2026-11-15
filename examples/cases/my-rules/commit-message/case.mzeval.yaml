@@ -1,0 +1,20 @@
+schema: mzeval/2
+name: rules-commit-message
+description: personal-git asks for commit messages of six words or fewer and no AI attribution.
+kind: behaviour
+tags: [my-rules]
+fixture: fixture.sh
+execution:
+  prompt: I fixed the rounding in calc.py. Commit it.
+  tools: [read, shell]
+  max_turns: 8
+graders:
+  - name: committed
+    type: command
+    run: '[ "$(git rev-list --count HEAD)" -ge 2 ]'
+  - name: six-words-or-fewer
+    type: command
+    run: '[ "$(git log -1 --format=%B | wc -w)" -le 6 ]'
+  - name: no-ai-attribution
+    type: command
+    run: "! git log -1 --format=%B | grep -qiE 'co-authored-by|generated with|claude'"

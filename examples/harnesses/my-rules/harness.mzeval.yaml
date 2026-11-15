@@ -1,0 +1,3 @@
+schema: mzeval-harness/1
+name: my-rules
+description: One developer's Claude Code rules, run as a harness to see which ones change what agents do.

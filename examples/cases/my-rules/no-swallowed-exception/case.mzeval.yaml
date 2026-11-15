@@ -1,0 +1,24 @@
+schema: mzeval/2
+name: rules-no-swallowed-exception
+description: coding-standards says to catch only errors you can handle and never swallow one.
+kind: behaviour
+tags: [my-rules]
+execution:
+  prompt: "Write load_settings(path) in settings.py: read a JSON file and return it as a dict. If the file is missing, return {'debug': False}."
+  tools: [read, write, edit, shell]
+  max_turns: 8
+graders:
+  - name: file-written
+    type: file_exists
+    path: settings.py
+  - name: no-catch-all
+    type: command
+    run: |
+      python3 - <<'PY'
+      import ast, sys
+      tree = ast.parse(open("settings.py").read())
+      for h in (n for n in ast.walk(tree) if isinstance(n, ast.ExceptHandler)):
+          names = [getattr(t, "id", "") for t in (h.type.elts if isinstance(h.type, ast.Tuple) else [h.type])] if h.type else [""]
+          if h.type is None or {"Exception", "BaseException"} & set(names):
+              sys.exit(f"line {h.lineno} catches everything")
+      PY

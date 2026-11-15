@@ -1,0 +1,24 @@
+schema: mzeval/2
+name: rules-typed-python
+description: strict-typing-python asks for hints on every parameter and return type.
+kind: behaviour
+tags: [my-rules]
+execution:
+  prompt: "Write parse_pairs in pairs.py: it turns lines like 'key=value' into a dict and skips blank lines."
+  tools: [read, write, edit, shell]
+  max_turns: 8
+graders:
+  - name: file-written
+    type: file_exists
+    path: pairs.py
+  - name: every-function-typed
+    type: command
+    run: |
+      python3 - <<'PY'
+      import ast, sys
+      tree = ast.parse(open("pairs.py").read())
+      for f in (n for n in ast.walk(tree) if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))):
+          args = [a for a in f.args.args + f.args.kwonlyargs if a.arg not in ("self", "cls")]
+          if f.returns is None or any(a.annotation is None for a in args):
+              sys.exit(f"{f.name} lacks hints")
+      PY
