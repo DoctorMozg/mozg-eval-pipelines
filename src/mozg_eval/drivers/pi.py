@@ -4,12 +4,13 @@ import asyncio
 import logging
 import os
 import re
-from collections.abc import AsyncIterator, Mapping
+from collections.abc import AsyncIterator, Mapping, Sequence
 from pathlib import Path
 
 from pydantic import BaseModel, JsonValue, ValidationError
 
 from mozg_eval.drivers.claude_plugins import PluginCopies, PluginRenderError
+from mozg_eval.drivers.pi_harness import PiHarness
 from mozg_eval.drivers.process import ChildProcess
 from mozg_eval.drivers.protocol import MAX_TURNS_REASON, AgentError, Capabilities, TrialRequest
 from mozg_eval.events.models import (
@@ -22,6 +23,7 @@ from mozg_eval.events.models import (
     ToolResult,
     Usage,
 )
+from mozg_eval.spec.harness import HarnessLoader
 from mozg_eval.spec.models import ToolKind
 
 log = logging.getLogger(__name__)
@@ -102,12 +104,14 @@ def _texts(blocks: list[dict[str, JsonValue]] | str) -> str:
 
 
 class PiStream:
-    """Turns `--mode json` lines into events; reading a SKILL.md under `skills` fires that skill."""
+    """Turns `--mode json` lines into events; reading a plugin's or user's SKILL.md fires it."""
 
-    def __init__(self, max_turns: int, skills: Path) -> None:
+    def __init__(self, max_turns: int, plugins: Path, user_skills: Path | None = None) -> None:
         self.max_turns = max_turns
         self.turns = 0
-        self._skill_read = re.compile(rf"^{re.escape(str(skills))}/[^/]+/skills/([^/]+)/SKILL\.md$")
+        roots = [rf"{re.escape(str(plugins))}/[^/]+/skills"]
+        roots += [re.escape(str(user_skills))] if user_skills else []
+        self._skill_read = re.compile(rf"^(?:{'|'.join(roots)})/([^/]+)/SKILL\.md$")
         self._fired: set[str] = set()
 
     def normalize(self, line: PiLine) -> list[Payload]:
@@ -174,6 +178,8 @@ class PiDriver:
         isolation="home",
         host_shell=False,
         tools=sorted(set(PI_TOOL_KINDS.values())),
+        # Pi has no subagents and no hook config; native/pi extensions stand in for hooks.
+        harness=["instructions", "skills", "mcp", "plugins"],
     )
 
     def __init__(self, home: Path, raw_dir: Path, executable: str = "pi") -> None:
@@ -191,9 +197,12 @@ class PiDriver:
             raise AgentError(f"{self.executable} --version exited with {process.returncode}")
         return out.decode().strip()
 
-    def command(self, request: TrialRequest, skill_dirs: list[Path]) -> list[str]:
+    def command(
+        self, request: TrialRequest, skill_dirs: list[Path], harness_flags: Sequence[str] = ()
+    ) -> list[str]:
         # -ne and -na keep the user's extensions and the workspace's .pi/ settings out.
         argv = [self.executable, "--mode", "json", "--no-session", "--no-skills", "-ne", "-na"]
+        argv += harness_flags
         for skills in skill_dirs:
             argv += ["--skill", str(skills)]
         if request.model:
@@ -218,13 +227,18 @@ class PiDriver:
             yield Error(message=str(exc))
             yield End(status="error", reason="plugin copy failed")
             return
-        stream = PiStream(request.limits.max_turns, copies.root)
+        env = self._env() | request.env
+        # Pi's default agent dir, now inside the trial HOME.
+        agent_dir = self.home / ".pi" / "agent"
+        harness_flags: list[str] = []
+        if request.harness:
+            harness = PiHarness(HarnessLoader().load(Path(request.harness)))
+            harness_flags = harness.materialize(agent_dir, env)
+        stream = PiStream(request.limits.max_turns, copies.root, agent_dir / "skills")
         ended = False
         # Pi waits for stdin to close before it starts, since piped input joins the prompt.
         async for raw_line in self._child.lines(
-            self.command(request, skill_dirs),
-            cwd=request.workspace,
-            env=self._env() | request.env,
+            self.command(request, skill_dirs, harness_flags), cwd=request.workspace, env=env
         ):
             if ended:
                 continue
