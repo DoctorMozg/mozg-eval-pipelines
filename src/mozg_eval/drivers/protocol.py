@@ -86,6 +86,9 @@ class TrialRequest(StrictModel):
     )
     model: str | None = None
     append_system_prompt: str | None = None
+    harness: str | None = Field(
+        default=None, description="harness directory whose parts the driver writes into its home"
+    )
     limits: Limits
 
 

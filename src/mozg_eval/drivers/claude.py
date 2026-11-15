@@ -8,6 +8,7 @@ from pathlib import Path
 
 from pydantic import BaseModel, JsonValue, ValidationError
 
+from mozg_eval.drivers.claude_harness import ClaudeHarness
 from mozg_eval.drivers.process import ChildProcess
 from mozg_eval.drivers.protocol import AgentError, Capabilities, TrialRequest
 from mozg_eval.events.models import (
@@ -24,6 +25,7 @@ from mozg_eval.events.models import (
     Usage,
     bare_name,
 )
+from mozg_eval.spec.harness import HarnessLoader
 from mozg_eval.spec.models import ToolKind
 
 log = logging.getLogger(__name__)
@@ -81,6 +83,9 @@ class StreamLine(_Loose):
     tools: list[str] = []
     hook_event: str = ""
     stdout: str = ""
+    skills: list[str] = []
+    agents: list[str] = []
+    mcp_servers: list[dict[str, JsonValue]] = []
     is_error: bool = False
     usage: _Usage | None = None
     total_cost_usd: float | None = None
@@ -188,6 +193,7 @@ class ClaudeDriver:
         isolation="home",
         tools=list(CLAUDE_TOOLS),
         tool_input=list(CLAUDE_TOOLS),
+        harness=["instructions", "skills", "agents", "hooks", "mcp", "plugins"],
     )
 
     def __init__(self, home: Path, raw_dir: Path, executable: str = "claude") -> None:
@@ -237,6 +243,10 @@ class ClaudeDriver:
 
     async def run(self, request: TrialRequest) -> AsyncIterator[Payload]:
         env = self._prepare_home() | request.env
+        harness = None
+        if request.harness:
+            harness = ClaudeHarness(HarnessLoader().load(Path(request.harness)))
+            harness.materialize(self.home / ".claude", Path(request.workspace), env)
         # On stdin, so no prompt text can be mistaken for an option value.
         lines = self._child.lines(
             self.command(request), cwd=request.workspace, env=env, stdin=request.prompt.encode()
@@ -244,12 +254,24 @@ class ClaudeDriver:
         billed = 0.0
         ended = False
         async for raw_line in lines:
+            if ended and self._child.cancelling:
+                continue  # draining a session stopped for a harness that didn't load
             try:
                 line = StreamLine.model_validate_json(raw_line)
             except ValidationError:
                 text = raw_line.decode(errors="replace").strip()[:200]
                 yield Log(level="warning", text=f"claude printed a non-event line: {text}")
                 continue
+            if harness and line.subtype == "init":
+                # Only the first init is the main session; a background agent sends its own.
+                gone, name = harness.missing(line.model_dump()), harness.harness.name
+                harness = None
+                if gone:
+                    yield Error(message=f"harness {name} didn't load: {', '.join(gone)}")
+                    yield End(status="error", reason="harness didn't load")
+                    ended = True
+                    self._child.terminate("harness didn't load")
+                    continue
             for payload in normalize(line):
                 if isinstance(payload, Usage) and payload.cost_usd is not None:
                     # Each result reports the running total; a background agent adds a second one.

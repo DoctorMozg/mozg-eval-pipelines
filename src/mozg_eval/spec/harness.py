@@ -27,7 +27,7 @@ type HarnessPart = Literal["instructions", "skills", "agents", "hooks", "mcp", "
 type NativeDriver = Literal["claude", "codex", "opencode", "pi"]
 NATIVE_DRIVERS: tuple[NativeDriver, ...] = ("claude", "codex", "opencode", "pi")
 # Entries a harness directory may hold besides its manifest; anything else is a typo.
-_ENTRIES = {"instructions", "skills", "agents", "hooks.json", "native", "README.md"}
+_ENTRIES = {"instructions", "skills", "agents", "hooks.json", "scripts", "native", "README.md"}
 _UNHASHED = {"__pycache__", "node_modules"}
 
 

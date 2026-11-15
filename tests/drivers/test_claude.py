@@ -158,6 +158,7 @@ class Run(Protocol):
         tools: list[ToolKind] | None = None,
         timeout_s: int = 30,
         fixture: Path = SKILL_FIRE,
+        harness: Path | None = None,
     ) -> list[Event]: ...
 
 
@@ -181,6 +182,7 @@ def run(tmp_path: Path, real_config: Path, fake_claude: Path) -> Run:
         tools: list[ToolKind] | None = None,
         timeout_s: int = 30,
         fixture: Path = SKILL_FIRE,
+        harness: Path | None = None,
     ) -> list[Event]:
         request = TrialRequest(
             trial="t1",
@@ -194,6 +196,7 @@ def run(tmp_path: Path, real_config: Path, fake_claude: Path) -> Run:
             plugins=["/repo/plugins/mz-memory"],
             tools=tools,
             model="haiku",
+            harness=str(harness) if harness else None,
             limits=Limits(max_turns=4, timeout_s=timeout_s),
         )
         driver = ClaudeDriver(tmp_path / "home", tmp_path / "raw", executable=str(fake_claude))
@@ -201,6 +204,29 @@ def run(tmp_path: Path, real_config: Path, fake_claude: Path) -> Run:
         return asyncio.run(TrialRunner("local", "r1", driver, store, []).run(request, {}))
 
     return go
+
+
+def demo_harness(tmp_path: Path) -> Path:
+    root = tmp_path / "harness"
+    (root / "instructions").mkdir(parents=True)
+    (root / "skills" / "demo").mkdir(parents=True)
+    (root / "harness.mzeval.yaml").write_text("schema: mzeval-harness/1\nname: demo\n")
+    (root / "instructions" / "style.md").write_text("Comments say why.\n")
+    (root / "skills" / "demo" / "SKILL.md").write_text("---\nname: demo\ndescription: d\n---\n")
+    return root
+
+
+def with_init_skills(tmp_path: Path, skills: list[str]) -> Path:
+    """SKILL_FIRE with its init line listing `skills` as well."""
+    lines = []
+    for raw in SKILL_FIRE.read_text().splitlines():
+        line = json.loads(raw)
+        if line.get("subtype") == "init":
+            line["skills"] = [*line["skills"], *skills]
+        lines.append(json.dumps(line))
+    stream = tmp_path / "init_skills.jsonl"
+    stream.write_text("\n".join(lines) + "\n")
+    return stream
 
 
 def recorded(tmp_path: Path) -> dict[str, Any]:
@@ -259,6 +285,26 @@ class TestClaudeDriver:
         assert Error(message="claude exited with code 1; see stderr.log") in events
         assert isinstance(events[-1], End)
         assert events[-1].status == "error"
+
+    def test_harness_is_written_into_the_trial_home(self, run: Run, tmp_path: Path) -> None:
+        harness = demo_harness(tmp_path)
+        stream = with_init_skills(tmp_path, ["demo"])
+
+        events = [e.payload for e in run(fixture=stream, harness=harness)]
+
+        rules = tmp_path / "home" / ".claude" / "rules" / "style.md"
+        assert rules.read_text() == "Comments say why.\n"
+        assert not any(isinstance(p, Error) for p in events)
+        assert events[-1] == End(status="ok")
+
+    def test_harness_skill_missing_from_init_stops_the_trial(
+        self, run: Run, tmp_path: Path
+    ) -> None:
+        events = [e.payload for e in run(harness=demo_harness(tmp_path))]
+
+        assert Error(message="harness demo didn't load: skill demo") in events
+        assert events[-1] == End(status="error", reason="harness didn't load")
+        assert not any(isinstance(p, SkillActivated) for p in events)
 
     def test_omitted_tools_mean_the_default_set(self, run: Run, tmp_path: Path) -> None:
         run()

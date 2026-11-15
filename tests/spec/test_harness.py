@@ -135,7 +135,7 @@ class TestErrors:
 
         assert issues_of(loader, root) == [
             f"{root / 'setting.json'}: unexpected entry in a harness; it may hold README.md, "
-            "agents, hooks.json, instructions, native, skills",
+            "agents, hooks.json, instructions, native, scripts, skills",
             f"{root / 'instructions/nested'}: instructions are flat .md files",
             f"{root / 'skills/no-skill-file'}: a skill is a folder holding SKILL.md",
             f"{root / 'agents/anonymous.md'}:1: frontmatter lacks description",
