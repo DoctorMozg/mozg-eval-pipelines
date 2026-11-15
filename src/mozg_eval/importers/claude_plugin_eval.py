@@ -246,6 +246,11 @@ class _CaseConverter:
             if fires and _arm(fires) == _arm(silent):
                 skill["owner"] = self._skill_name(fires)
                 lifted.append(fires)
+            elif fires and _arm(fires) == "with":
+                # The owner can fire only with the bundle, so the label covers that arm and the
+                # decoy's both-arm check stays a grader.
+                skill["owner"] = self._skill_name(fires)
+                lifted = [fires]
             expect = {"skill": skill}
         else:
             self._flag(

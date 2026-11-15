@@ -83,7 +83,8 @@ class TestRouting:
         }
         assert "graders" not in result.case
 
-    def test_owner_scored_in_another_arm_stays_a_grader(self, convert: Convert) -> None:
+    # The usual 1.1 shape: the decoy is checked in both arms, the owner only with the bundle.
+    def test_owner_scored_only_with_the_bundle_labels_the_with_arm(self, convert: Convert) -> None:
         graders = [
             routing("silent", "render", min=0, max=0, arm="both"),
             routing("owner", "verify"),
@@ -91,8 +92,17 @@ class TestRouting:
 
         result = convert(case_11(graders, tags=["negative"]))
 
-        assert result.case["expect"] == {"skill": {"not": "render"}, "arm": "both"}
-        assert result.case["graders"] == [{"name": "owner", "type": "skill", "skill": "verify"}]
+        assert result.case["expect"] == {"skill": {"not": "render", "owner": "verify"}}
+        assert result.case["graders"] == [
+            {
+                "name": "silent",
+                "type": "skill",
+                "skill": "render",
+                "min": 0,
+                "max": 0,
+                "arm": "both",
+            }
+        ]
 
     def test_count_limit_survives_next_to_the_label(self, convert: Convert) -> None:
         result = convert(case_11([routing("fires", "render", min=1, max=2)], tags=["fire"]))

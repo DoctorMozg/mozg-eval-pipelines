@@ -294,7 +294,9 @@ As built (milestone 2), so v2 stays a superset of 1.1:
   both arms and `with` graders are reported as indicators only. Skill graders and `expect` default
   to `with`, like 1.1's Skill exclusion; everything else defaults to `both`. `weight` is kept.
 - `expect.skill.owner` is graded: the owner must fire. The importer sets it only where the 1.1 case
-  asserted it, so migrated cases make the same assertions as before.
+  asserted it, so migrated cases make the same assertions as before. When the owner's grader counts
+  only with the bundle and the decoy's in both arms, the label covers the with arm and the decoy's
+  check stays a `skill` grader in both.
 - `file_exists` globs over files the agent created during the run, as in 1.1.
 - `file_changed` counts workspace files created, modified or deleted during the run (from the
   workspace diff), whatever tool changed them. The importer maps 1.1 `Write`/`Edit` path checks to
@@ -562,10 +564,19 @@ each case its `allowed_tools`. Its mutation runner and the hook prechecks stay u
 equivalent. mozg-video-plugins gained `make eval`, and its `make lint` imports and lints every
 plugin's cases. Its per-plugin linters dropped only the checks the strict import now makes
 (mapping, schema version, unknown keys, grader types and options) and keep their content rules.
-The cutover found two gaps, both fixed: an empty `tools` list now offers no tool instead of the
-default set, and the turn guard no longer counts a subagent's messages. The verify ran on a stub
-agent, so it covers import, selection, grading and exit codes for free. No paid run has gone
-through `make eval` yet.
+The cutover found five gaps, all fixed. An empty `tools` list now offers no tool instead of the
+default set. A relative case path now finds its fixture, which runs from the trial workspace. A
+broken agent now stops the run with exit 2 and one line instead of a traceback. A recorded haiku run
+whose Agent call went to the background (`tests/drivers/fixtures/claude_background_agent.jsonl`)
+ended in two `result` lines, each holding the session's running cost, which mzeval had summed; the
+Claude driver now emits only what each result adds. The same run took three main turns under
+`--max-turns=2`, because Claude counts turns per segment of the session, so the turn guard, a second
+cap on top of every driver's own, is gone; a timeout and the spend cap still stop a runaway trial.
+The first paid run after the cutover (mz-memory, 20 trials) found two more. Claude's cost arrives
+on its last line, so a trial that crossed the spend cap had already finished, yet was recorded as
+cancelled and failed; a clean end the driver reports after a stop now stands. And no near-miss case
+kept its owner, because 1.1 scores the decoy in both arms and the owner only with the bundle; the
+importer now labels the with arm with both, so the owner firing no longer counts as a false trigger.
 
 ### 4.11 Runner: a thin executor, run locally or in CI
 
