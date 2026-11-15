@@ -37,11 +37,29 @@ def line_map(node: yaml.Node | None, loc: Loc = ()) -> dict[Loc, int]:
 @dataclass(frozen=True)
 class SpecIssue:
     path: Path
-    line: int
+    line: int | None  # None for a problem with a whole file or folder
     message: str
 
     def __str__(self) -> str:
-        return f"{self.path}:{self.line}: {self.message}"
+        where = f"{self.path}:{self.line}" if self.line is not None else str(self.path)
+        return f"{where}: {self.message}"
+
+
+def validation_issue(
+    path: Path, error: ErrorDetails, lines: dict[Loc, int], what: str
+) -> SpecIssue:
+    """A pydantic error as a file:line issue; `what` names the document root in messages."""
+    # Pydantic adds union tags (a grader type, a server kind) to loc; keep the YAML's parts.
+    found: Loc = ()
+    for part in error["loc"]:
+        if (*found, part) in lines:
+            found = (*found, part)
+    if error["type"] == "extra_forbidden":
+        where = ".".join(map(str, found[:-1])) or what
+        message = f"unknown key '{error['loc'][-1]}' in {where}"
+    else:
+        message = f"{'.'.join(map(str, error['loc'])) or what}: {error['msg']}"
+    return SpecIssue(path, lines.get(found, 1), message)
 
 
 class CaseLoadError(Exception):
@@ -72,8 +90,8 @@ class CaseLoader:
         try:
             case = Case.model_validate(data)
         except ValidationError as exc:
-            issues = [self._issue(path, error, lines) for error in exc.errors()]
-            raise CaseLoadError(sorted(issues, key=lambda issue: issue.line)) from exc
+            issues = [validation_issue(path, error, lines, "<case>") for error in exc.errors()]
+            raise CaseLoadError(sorted(issues, key=lambda issue: issue.line or 0)) from exc
         if missing := self._missing_paths(path, case, lines):
             raise CaseLoadError(missing)
         log.debug("loaded case %s from %s", case.name, path)
@@ -101,24 +119,4 @@ class CaseLoader:
                 found.extend(sorted(root.rglob(CASE_FILENAME)))
             else:
                 found.append(root)
-        return found
-
-    def _issue(self, path: Path, error: ErrorDetails, lines: dict[Loc, int]) -> SpecIssue:
-        loc = self._data_loc(error["loc"], lines)
-        where = ".".join(str(part) for part in error["loc"]) or "<case>"
-        if error["type"] == "extra_forbidden":
-            message = (
-                f"unknown key '{error['loc'][-1]}' in {'.'.join(map(str, loc[:-1])) or '<case>'}"
-            )
-        else:
-            message = f"{where}: {error['msg']}"
-        return SpecIssue(path, lines.get(loc, 1), message)
-
-    @staticmethod
-    def _data_loc(loc: tuple[str | int, ...], lines: dict[Loc, int]) -> Loc:
-        # Pydantic adds union tags (the grader type) to loc; keep only parts found in the YAML.
-        found: Loc = ()
-        for part in loc:
-            if (*found, part) in lines:
-                found = (*found, part)
         return found

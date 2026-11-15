@@ -40,6 +40,12 @@ from mozg_eval.runner.suite import (
     SuiteRunner,
     TrialSummary,
 )
+from mozg_eval.spec.harness import (
+    HARNESS_FILENAME,
+    HarnessLoader,
+    HarnessLoadError,
+    HarnessManifest,
+)
 from mozg_eval.spec.loader import CASE_FILENAME, CaseLoader, CaseLoadError
 from mozg_eval.spec.models import Case
 from mozg_eval.storage.base import DEFAULT_WORKSPACE
@@ -106,27 +112,42 @@ def lint(
     paths: Annotated[
         list[Path],
         typer.Argument(
-            exists=True, help=f"Case files, or directories to search for {CASE_FILENAME}."
+            exists=True,
+            help=f"Case files, or folders to search for {CASE_FILENAME} and {HARNESS_FILENAME}.",
         ),
     ],
 ) -> None:
-    """Validate case files; exit 1 if any is invalid."""
-    loader = CaseLoader()
-    files = loader.discover(paths)
-    if not files:
-        typer.echo(f"no {CASE_FILENAME} found under: {', '.join(map(str, paths))}", err=True)
+    """Validate case files and harnesses; exit 1 if any is invalid."""
+    cases = CaseLoader()
+    harnesses = HarnessLoader()
+    case_files = cases.discover([p for p in paths if p.name != HARNESS_FILENAME])
+    harness_dirs = harnesses.discover(paths)
+    if not case_files and not harness_dirs:
+        found = f"no {CASE_FILENAME} or {HARNESS_FILENAME} found under"
+        typer.echo(f"{found}: {', '.join(map(str, paths))}", err=True)
         raise typer.Exit(2)
 
     invalid = 0
-    for path in files:
+    for path in case_files:
         try:
-            loader.load(path)
+            cases.load(path)
         except CaseLoadError as exc:
             invalid += 1
             for issue in exc.issues:
                 typer.echo(str(issue), err=True)
-    typer.echo(f"{len(files) - invalid} of {len(files)} case files valid")
-    if invalid:
+    bad_harnesses = 0
+    for root in harness_dirs:
+        try:
+            harnesses.load(root)
+        except HarnessLoadError as exc:
+            bad_harnesses += 1
+            for issue in exc.issues:
+                typer.echo(str(issue), err=True)
+    if case_files:
+        typer.echo(f"{len(case_files) - invalid} of {len(case_files)} case files valid")
+    if harness_dirs:
+        typer.echo(f"{len(harness_dirs) - bad_harnesses} of {len(harness_dirs)} harnesses valid")
+    if invalid or bad_harnesses:
         raise typer.Exit(1)
 
 
@@ -498,9 +519,14 @@ def report(
 
 
 @app.command()
-def schema() -> None:
+def schema(
+    harness: Annotated[
+        bool, typer.Option("--harness", help=f"Print the schema of {HARNESS_FILENAME} instead.")
+    ] = False,
+) -> None:
     """Print the JSON Schema of the case format, for editors and other tools."""
-    typer.echo(json.dumps(Case.model_json_schema(by_alias=True), indent=2))
+    model = HarnessManifest if harness else Case
+    typer.echo(json.dumps(model.model_json_schema(by_alias=True), indent=2))
 
 
 @import_app.command("claude-plugin-eval")

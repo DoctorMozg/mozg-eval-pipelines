@@ -12,6 +12,7 @@ from pydantic import Field, ValidationError
 
 from mozg_eval.drivers.process import ChildProcess
 from mozg_eval.events.models import PAYLOAD, Error, Payload
+from mozg_eval.spec.harness import HarnessPart
 from mozg_eval.spec.models import StrictModel, ToolKind
 
 log = logging.getLogger(__name__)
@@ -39,6 +40,9 @@ class Capabilities(StrictModel):
     tool_input: list[ToolKind] = Field(
         default_factory=list,
         description="kinds whose call input uses Claude Code's field names, so `match` applies",
+    )
+    harness: list[HarnessPart] = Field(
+        default_factory=list, description="harness parts the driver can load into a trial"
     )
 
 

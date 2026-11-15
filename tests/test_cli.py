@@ -57,6 +57,20 @@ class TestLint:
 
         assert result.exit_code == 2
 
+    def test_harnesses_are_linted_next_to_cases(self, runner: CliRunner, tmp_path: Path) -> None:
+        good, bad = tmp_path / "good", tmp_path / "bad"
+        for root, name in ((good, "good"), (bad, "bad")):
+            root.mkdir()
+            manifest = f"schema: mzeval-harness/1\nname: {name}\n"
+            (root / "harness.mzeval.yaml").write_text(manifest)
+        (bad / "settings.json").write_text("{}")
+
+        result = runner.invoke(app, ["lint", str(tmp_path)])
+
+        assert result.exit_code == 1
+        assert "1 of 2 harnesses valid" in result.stdout
+        assert f"{bad / 'settings.json'}: unexpected entry in a harness" in result.stderr
+
 
 class TestSchema:
     def test_schema_is_json_with_the_case_keys(self, runner: CliRunner) -> None:
@@ -65,3 +79,9 @@ class TestSchema:
         schema = json.loads(result.stdout)
         assert {"schema", "name", "kind", "execution", "graders"} <= schema["properties"].keys()
         assert schema["additionalProperties"] is False
+
+    def test_harness_schema_lists_the_manifest_keys(self, runner: CliRunner) -> None:
+        result = runner.invoke(app, ["schema", "--harness"])
+
+        schema = json.loads(result.stdout)
+        assert {"schema", "name", "plugins", "mcp"} <= schema["properties"].keys()
