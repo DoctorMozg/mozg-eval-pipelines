@@ -39,7 +39,7 @@ class TestLint:
         result = runner.invoke(app, ["lint", str(EXAMPLES)])
 
         assert result.exit_code == 0
-        assert "3 of 3 case files valid" in result.stdout
+        assert "9 of 9 case files valid" in result.stdout
 
     def test_invalid_case_fails_with_file_and_line(self, runner: CliRunner, tmp_path: Path) -> None:
         case = tmp_path / "case.mzeval.yaml"
