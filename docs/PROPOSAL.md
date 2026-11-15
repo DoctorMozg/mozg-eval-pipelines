@@ -577,6 +577,11 @@ on its last line, so a trial that crossed the spend cap had already finished, ye
 cancelled and failed; a clean end the driver reports after a stop now stands. And no near-miss case
 kept its owner, because 1.1 scores the decoy in both arms and the owner only with the bundle; the
 importer now labels the with arm with both, so the owner firing no longer counts as a false trigger.
+The paid Agent run (6 trials) found two more. `claude -p` exits 1 after any error result, so a
+routing case that stopped at its own max_turns also logged a spurious exit-code error; that error
+now appears only when no result arrived. And the linked login loaded the account's claude.ai
+connectors into the trial, where a subagent used one; the Claude driver now sets
+`ENABLE_CLAUDEAI_MCP_SERVERS=false`, which keeps the plugins' own MCP servers.
 
 ### 4.11 Runner: a thin executor, run locally or in CI
 

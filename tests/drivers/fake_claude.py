@@ -2,6 +2,7 @@
 
 FAKE_MODE: replay (default) prints FAKE_FIXTURE; hang ignores SIGTERM and never finishes.
 FAKE_DELAY_S waits before the replay; FAKE_SPANS gets a "start end" line per run.
+FAKE_EXIT is the exit code after the replay.
 """
 
 import json
@@ -33,6 +34,7 @@ def main() -> None:
     if spans := os.environ.get("FAKE_SPANS"):
         with open(spans, "a") as out:
             out.write(f"{started} {time.time()}\n")
+    sys.exit(int(os.environ.get("FAKE_EXIT", "0")))
 
 
 main()

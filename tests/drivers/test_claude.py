@@ -12,6 +12,7 @@ from mozg_eval.drivers.claude import ClaudeDriver, StreamLine, isolated_env, nor
 from mozg_eval.drivers.protocol import Limits, TrialRequest
 from mozg_eval.events.models import (
     End,
+    Error,
     Event,
     HookFired,
     Log,
@@ -141,6 +142,14 @@ class TestIsolatedEnv:
         assert env["CLAUDE_CONFIG_DIR"] == str(tmp_path / "home" / ".claude")
         assert env["LANG"] == "C.UTF-8"
 
+    def test_turns_off_the_accounts_claude_ai_connectors(self, tmp_path: Path) -> None:
+        # The linked login would otherwise load the user's own claude.ai MCP connectors.
+        base = {"ENABLE_CLAUDEAI_MCP_SERVERS": "true"}
+
+        env = isolated_env(base, tmp_path / "home", tmp_path / "real")
+
+        assert env["ENABLE_CLAUDEAI_MCP_SERVERS"] == "false"
+
 
 class Run(Protocol):
     def __call__(
@@ -222,6 +231,34 @@ class TestClaudeDriver:
         assert events[-1] == End(status="ok")
         replies = [p.text for p in events if isinstance(p, Message)]
         assert replies[-1].startswith("The subagent returned three distinct facts")
+
+    def test_max_turns_stop_with_exit_code_1_reports_no_error(
+        self, run: Run, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # claude -p exits 1 whenever its result line is an error, max_turns included.
+        lines = SKILL_FIRE.read_text().splitlines()
+        result = json.loads(lines[-1]) | {"subtype": "error_max_turns", "is_error": True}
+        stream = tmp_path / "max_turns.jsonl"
+        stream.write_text("\n".join([*lines[:-1], json.dumps(result)]) + "\n")
+        monkeypatch.setenv("FAKE_EXIT", "1")
+
+        events = [e.payload for e in run(fixture=stream)]
+
+        assert not any(isinstance(p, Error) for p in events)
+        assert events[-1] == End(status="ok", reason="max_turns reached")
+
+    def test_crash_before_a_result_reports_the_exit_code(
+        self, run: Run, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        stream = tmp_path / "crash.jsonl"
+        stream.write_text("\n".join(SKILL_FIRE.read_text().splitlines()[:-1]) + "\n")
+        monkeypatch.setenv("FAKE_EXIT", "1")
+
+        events = [e.payload for e in run(fixture=stream)]
+
+        assert Error(message="claude exited with code 1; see stderr.log") in events
+        assert isinstance(events[-1], End)
+        assert events[-1].status == "error"
 
     def test_omitted_tools_mean_the_default_set(self, run: Run, tmp_path: Path) -> None:
         run()

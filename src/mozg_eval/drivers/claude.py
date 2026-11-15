@@ -163,7 +163,7 @@ def normalize(line: StreamLine) -> list[Payload]:
 
 
 def isolated_env(base: Mapping[str, str], home: Path, real_config: Path) -> dict[str, str]:
-    """The parent env minus Claude session state and plugin bin dirs from the real config dir."""
+    """The parent env minus Claude session state, real plugin bin dirs and claude.ai connectors."""
     env = {
         key: value
         for key, value in base.items()
@@ -173,6 +173,8 @@ def isolated_env(base: Mapping[str, str], home: Path, real_config: Path) -> dict
     env["PATH"] = os.pathsep.join(p for p in path if not Path(p).is_relative_to(real_config))
     env["HOME"] = str(home)
     env["CLAUDE_CONFIG_DIR"] = str(home / ".claude")
+    # The linked login would load the account's claude.ai connectors; plugin MCP servers stay.
+    env["ENABLE_CLAUDEAI_MCP_SERVERS"] = "false"
     return env
 
 
@@ -240,6 +242,7 @@ class ClaudeDriver:
             self.command(request), cwd=request.workspace, env=env, stdin=request.prompt.encode()
         )
         billed = 0.0
+        ended = False
         async for raw_line in lines:
             try:
                 line = StreamLine.model_validate_json(raw_line)
@@ -253,9 +256,11 @@ class ClaudeDriver:
                     total = payload.cost_usd
                     payload = payload.model_copy(update={"cost_usd": total - billed})
                     billed = total
+                ended = ended or isinstance(payload, End)
                 yield payload
         code = self._child.returncode
-        if code is not None and code > 0:
+        # claude exits 1 after any error result, max_turns included; the End already says why.
+        if code is not None and code > 0 and not ended:
             yield Error(message=f"claude exited with code {code}; see stderr.log")
 
     async def cancel(self, reason: str) -> None:

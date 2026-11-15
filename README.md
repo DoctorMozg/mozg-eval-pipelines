@@ -110,7 +110,7 @@ drivers: { exclude: [pi] }
 
 ## Drivers
 
-Each trial runs in a temp HOME so your own skills, hooks and settings don't leak in.
+Each trial runs in a temp HOME so your own skills, hooks and settings don't leak in. Claude trials also leave out your claude.ai connectors.
 
 | Agent       | `--driver` | How it runs                                                                     | Auth from the environment                                               |
 | ----------- | ---------- | ------------------------------------------------------------------------------- | ----------------------------------------------------------------------- |
