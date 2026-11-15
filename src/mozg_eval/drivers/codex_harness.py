@@ -9,7 +9,12 @@ from pathlib import Path
 from typing import Any
 
 from mozg_eval.drivers.codex_plugins import HOOK_COMMANDS, instrument_hooks
-from mozg_eval.drivers.harness_parts import agent_name, expand_env, hooks_of
+from mozg_eval.drivers.harness_parts import (
+    agent_name,
+    expand_env,
+    hooks_of,
+    write_instructions,
+)
 from mozg_eval.drivers.toml_writer import TomlValue, dumps, merge
 from mozg_eval.spec.harness import Harness, HttpServer, read_frontmatter
 
@@ -29,7 +34,7 @@ class CodexHarness:
             ignore = shutil.ignore_patterns("config.toml")
             shutil.copytree(native, codex_home, dirs_exist_ok=True, ignore=ignore)
             merge(config, _read_toml(native / "config.toml"))
-        self._write_instructions(codex_home / "AGENTS.md")
+        write_instructions(harness, codex_home / "AGENTS.md", "Codex")
         for folder in harness.skills:
             shutil.copytree(folder, home / ".agents" / "skills" / folder.name, dirs_exist_ok=True)
         for path in harness.agents:
@@ -41,17 +46,6 @@ class CodexHarness:
         merge(config, {"projects": {str(workspace.resolve()): {"trust_level": "trusted"}}})
         config_path.write_text(dumps(config), encoding="utf-8")
         log.info("harness %s written to %s", harness.name, codex_home)
-
-    def _write_instructions(self, path: Path) -> None:
-        if not self.harness.instructions:
-            return
-        bodies = [path.read_text(encoding="utf-8").rstrip()] if path.exists() else []
-        for source in self.harness.instructions:
-            meta, body = read_frontmatter(source)
-            if "paths" in meta:
-                log.warning("%s: Codex has no path-scoped instructions; it loads always", source)
-            bodies.append(body.strip())
-        path.write_text("\n\n".join(bodies) + "\n", encoding="utf-8")
 
     def _write_hooks(self, codex_home: Path) -> None:
         """Every hook, native ones too, runs through the capture script that logs it."""

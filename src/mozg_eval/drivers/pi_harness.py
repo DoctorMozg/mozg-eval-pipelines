@@ -7,8 +7,8 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
-from mozg_eval.drivers.harness_parts import expand_env
-from mozg_eval.spec.harness import Harness, HttpServer, read_frontmatter
+from mozg_eval.drivers.harness_parts import expand_env, write_instructions
+from mozg_eval.spec.harness import Harness, HttpServer
 
 log = logging.getLogger(__name__)
 
@@ -24,7 +24,7 @@ class PiHarness:
             shutil.copytree(
                 native, agent_dir, dirs_exist_ok=True, ignore=shutil.ignore_patterns("mcp.json")
             )
-        self._write_instructions(agent_dir / "AGENTS.md")
+        write_instructions(harness, agent_dir / "AGENTS.md", "Pi")
         for folder in harness.skills:
             shutil.copytree(folder, agent_dir / "skills" / folder.name, dirs_exist_ok=True)
         servers = self._mcp_servers(native / "mcp.json" if native else None, env)
@@ -42,18 +42,6 @@ class PiHarness:
         if servers:
             flags += ["-e", "builtin:mcp"]
         return flags
-
-    def _write_instructions(self, path: Path) -> None:
-        if not self.harness.instructions:
-            return
-        bodies = [path.read_text(encoding="utf-8").rstrip()] if path.exists() else []
-        for source in self.harness.instructions:
-            meta, body = read_frontmatter(source)
-            if "paths" in meta:
-                log.warning("%s: Pi has no path-scoped instructions; it loads always", source)
-            bodies.append(body.strip())
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text("\n\n".join(bodies) + "\n", encoding="utf-8")
 
     def _mcp_servers(self, native: Path | None, env: Mapping[str, str]) -> dict[str, Any]:
         """Native mcp.json servers, then the manifest's; Any because entries are free-form JSON."""

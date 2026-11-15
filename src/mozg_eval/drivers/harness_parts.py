@@ -1,6 +1,7 @@
 """Reading a harness's parts the same way for every driver that writes them into its home."""
 
 import json
+import logging
 import re
 from collections.abc import Mapping
 from pathlib import Path
@@ -8,6 +9,8 @@ from typing import Any
 
 from mozg_eval.drivers.protocol import AgentError
 from mozg_eval.spec.harness import Harness, read_frontmatter
+
+log = logging.getLogger(__name__)
 
 # Hook commands name the harness's own scripts through this token, as plugins use theirs.
 HARNESS_ROOT = "${HARNESS_ROOT}"
@@ -44,3 +47,17 @@ def hooks_of(harness: Harness) -> dict[str, list[Any]]:
         text.replace(HARNESS_ROOT, str(harness.root.resolve()))
     )["hooks"]
     return hooks
+
+
+def write_instructions(harness: Harness, path: Path, agent: str) -> None:
+    """Appends each instruction's body to the agent's one user-level instructions file."""
+    if not harness.instructions:
+        return
+    bodies = [path.read_text(encoding="utf-8").rstrip()] if path.exists() else []
+    for source in harness.instructions:
+        meta, body = read_frontmatter(source)
+        if "paths" in meta:
+            log.warning("%s: %s has no path-scoped instructions; it loads always", source, agent)
+        bodies.append(body.strip())
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("\n\n".join(bodies) + "\n", encoding="utf-8")
