@@ -1,6 +1,7 @@
 """Which assertions a driver's events can answer; the rest grade n/a, never fail."""
 
 from mozg_eval.drivers.protocol import Capabilities
+from mozg_eval.spec.harness import Harness
 from mozg_eval.spec.models import (
     Case,
     Grader,
@@ -19,6 +20,12 @@ class DriverSupport:
     def __init__(self, driver: str, capabilities: Capabilities) -> None:
         self.driver = driver
         self.capabilities = capabilities
+
+    def harness_gap(self, harness: Harness) -> str | None:
+        """Why this driver can't load the harness, or None when it loads every part."""
+        if missing := sorted(harness.parts() - set(self.capabilities.harness)):
+            return f"{self.driver} can't load harness {harness.name}: {', '.join(missing)}"
+        return None
 
     def expect_gap(self, case: Case) -> str | None:
         if case.expect.skill is not None and self.capabilities.skills == "none":

@@ -28,7 +28,7 @@ def outcome(trial: TrialRecord) -> Outcome:
 
 def heatmap(trials: list[TrialRecord]) -> Spec:
     rows: list[JsonValue] = [
-        {"case": t.case, "repeat": t.repeat, "outcome": outcome(t)} for t in trials
+        {"case": t.label, "repeat": t.repeat, "outcome": outcome(t)} for t in trials
     ]
     return {
         "$schema": "https://vega.github.io/schema/vega-lite/v6.json",
@@ -121,7 +121,7 @@ class ReportBuilder:
         grades = self.results.list_grades(self.ws, run.id)
         failures = [
             (t, g)
-            for t in sorted(trials, key=lambda t: (t.case, t.repeat))
+            for t in sorted(trials, key=lambda t: (t.label, t.repeat))
             for g in grades.get(t.id, [])
             if g.verdict == "fail"
         ]

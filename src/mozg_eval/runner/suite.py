@@ -21,6 +21,7 @@ from mozg_eval.judge.grading import TrialJudge, merged
 from mozg_eval.runner.checks import WorkspaceChecks, needs_workspace, snapshot
 from mozg_eval.runner.settings import resolve_settings
 from mozg_eval.runner.trial import CostGuard, Guard, SpendCap, TrialRunner
+from mozg_eval.spec.harness import Harness
 from mozg_eval.spec.loader import CaseLoader
 from mozg_eval.spec.models import Case
 from mozg_eval.storage.base import ArtifactRef, RunRecord, TrialArm, TrialRecord, new_id
@@ -67,6 +68,8 @@ class RunOptions:
     select: CaseFilter = CaseFilter()
     jobs: int = 1  # trials that run side by side, each in its own temp HOME and workspace
     max_cost_usd: float | None = None  # agent and judge spend; no trial starts once it is reached
+    # Every case runs once per entry; None is the agent's bare setup, the default.
+    harnesses: tuple[Harness | None, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -75,6 +78,7 @@ class PlannedTrial:
     case: Case
     arm: TrialArm
     repeat: int
+    harness: Harness | None = None
 
 
 @dataclass(frozen=True)
@@ -153,6 +157,9 @@ class SuiteRunner:
     async def run(
         self, case_files: Sequence[Path], options: RunOptions = RunOptions()
     ) -> SuiteResult:
+        for harness in filter(None, options.harnesses):
+            if gap := self.support.harness_gap(harness):
+                raise AgentError(gap)
         loader = CaseLoader()
         # Absolute, because the fixture runs from the trial's own workspace.
         loaded = [(path.parent.resolve(), loader.load(path)) for path in case_files]
@@ -165,17 +172,19 @@ class SuiteRunner:
         log.info("run %s: %d cases on %s", run.id, len(cases), self.driver_name)
         skipped: dict[str, str] = {}
         planned: list[PlannedTrial] = []
+        setups: tuple[Harness | None, ...] = options.harnesses or (None,)
         for case_dir, case in cases:
             if reason := self.support.skip_reason(case):
                 log.warning("skipping %s: %s", case.name, reason)
                 skipped[case.name] = reason
                 continue
             execution = case.execution.model_copy(update=self.overrides)
-            for arm in self.arms(case, options.ablation):
-                planned += [
-                    PlannedTrial(case_dir, case, arm, repeat)
-                    for repeat in range(1, execution.runs + 1)
-                ]
+            for setup in setups:
+                for arm in self.arms(case, options.ablation):
+                    planned += [
+                        PlannedTrial(case_dir, case, arm, repeat, setup)
+                        for repeat in range(1, execution.runs + 1)
+                    ]
         slots = asyncio.Semaphore(options.jobs)
         cap = None if options.max_cost_usd is None else SpendCap(options.max_cost_usd)
 
@@ -202,7 +211,13 @@ class SuiteRunner:
     async def _trial(
         self, run: RunRecord, judge: TrialJudge, item: PlannedTrial, cap: SpendCap | None
     ) -> TrialSummary:
-        case_dir, case, arm, repeat = item.case_dir, item.case, item.arm, item.repeat
+        case_dir, case, arm, repeat, harness = (
+            item.case_dir,
+            item.case,
+            item.arm,
+            item.repeat,
+            item.harness,
+        )
         execution = case.execution.model_copy(update=self.overrides)
         trial_id = new_id()
         # The temp dir holds the workspace and the HOME with linked credentials; both go with it.
@@ -215,17 +230,19 @@ class SuiteRunner:
             if case.fixture:
                 await _exec("bash", str(case_dir / case.fixture), cwd=workspace, env=check_env)
             before = snapshot(workspace)
+            bundle = [] if arm == "without" else [(case_dir / p).resolve() for p in case.bundle]
+            # The harness is the setup under test, so its plugins stay in both ablation arms.
+            plugins = [*bundle, *(harness.plugins if harness else ())]
             request = TrialRequest(
                 trial=trial_id,
                 prompt=execution.prompt,
                 workspace=str(workspace),
                 env=execution.env,
-                plugins=[]
-                if arm == "without"
-                else [str((case_dir / plugin).resolve()) for plugin in case.bundle],
+                plugins=[str(plugin) for plugin in plugins],
                 tools=execution.tools,
                 model=execution.model,
                 append_system_prompt=execution.append_system_prompt,
+                harness=str(harness.root.resolve()) if harness else None,
                 limits=Limits(max_turns=execution.max_turns, timeout_s=execution.timeout_s),
             )
             # Every driver enforces max_turns itself; Claude counts it per segment of a session.
@@ -262,6 +279,8 @@ class SuiteRunner:
             status=status,
             cost_usd=cost,
             passed=TrialGrader.passed(events, grades),
+            harness=harness.name if harness else None,
+            harness_digest=harness.digest if harness else None,
         )
         self.stores.results.add_trial(self.ws, record)
         self.stores.results.add_grades(self.ws, trial_id, grades)

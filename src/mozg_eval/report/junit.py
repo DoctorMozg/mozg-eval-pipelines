@@ -25,7 +25,7 @@ class JUnitReport:
         suite = ET.SubElement(root, "testsuite", name=self.suite)
         counts = {"tests": 0, "failures": 0, "errors": 0, "skipped": 0}
         for case in stats.cases:
-            runs = sorted((t for t in trials if t.case == case.case), key=lambda t: t.repeat)
+            runs = sorted((t for t in trials if t.label == case.case), key=lambda t: t.repeat)
             testcase = ET.SubElement(suite, "testcase", classname=self.suite, name=case.case)
             counts["tests"] += 1
             lines = [self._trial_line(t, grades.get(t.id, [])) for t in runs]

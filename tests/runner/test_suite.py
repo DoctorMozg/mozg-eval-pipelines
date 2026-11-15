@@ -17,8 +17,9 @@ from mozg_eval.judge.grading import TrialJudge
 from mozg_eval.judge.verdict import CriterionJudge
 from mozg_eval.runner.rejudge import Rejudger
 from mozg_eval.runner.suite import RunOptions, SuiteRunner
+from mozg_eval.spec.harness import HarnessLoader
 from mozg_eval.spec.loader import CaseLoader
-from mozg_eval.storage.base import ArtifactRef
+from mozg_eval.storage.base import ArtifactRef, TrialRecord
 from mozg_eval.storage.config import StorageConfig, open_stores
 
 SKILL_FIRE = Path(__file__).parents[1] / "drivers" / "fixtures" / "claude_skill_fire.jsonl"
@@ -668,3 +669,97 @@ class TestRejudge:
         assert (no_run.exit_code, bad_judge.exit_code) == (2, 2)
         assert "no stored run 'nope'" in no_run.output
         assert "judge: Unknown model: nonsense" in bad_judge.output
+
+
+class TestHarness:
+    """`--harness none --harness rules`: rules writes a file only a harness-loaded trial has."""
+
+    @pytest.fixture
+    def evals(self, two_cases: Path) -> Path:
+        check = "test -f $HOME/.claude/rules/style.md"
+        grader = f"graders:\n  - {{name: ruled, type: command, run: {check}}}\n"
+        for case in two_cases.glob("*/case.mzeval.yaml"):
+            case.write_text(case.read_text() + grader)
+        return two_cases
+
+    @pytest.fixture
+    def rules(self, tmp_path: Path) -> Path:
+        root = tmp_path / "harnesses" / "rules"
+        (root / "instructions").mkdir(parents=True)
+        (root / "harness.mzeval.yaml").write_text("schema: mzeval-harness/1\nname: rules\n")
+        (root / "instructions" / "style.md").write_text("Comments say why.\n")
+        return root
+
+    def run_ab(self, evals: Path, rules: Path, fake_claude: Path) -> str:
+        argv = ["run", str(evals), "--harness", "none", "--harness", str(rules)]
+        result = CliRunner().invoke(app, [*argv, "--executable", str(fake_claude)])
+        assert result.exit_code == 0, result.output
+        return result.output
+
+    def stored(self, tmp_path: Path) -> tuple[str, list[TrialRecord]]:
+        stores = open_stores(StorageConfig.load(tmp_path, env={}))
+        (run,) = stores.results.list_runs("local")
+        trials = stores.results.list_trials("local", run.id)
+        stores.results.close()
+        return run.id, trials
+
+    def test_every_case_runs_once_per_harness_and_only_the_baseline_misses(
+        self, evals: Path, rules: Path, fake_claude: Path, tmp_path: Path
+    ) -> None:
+        output = self.run_ab(evals, rules, fake_claude)
+
+        _, trials = self.stored(tmp_path)
+        assert len(trials) == 8
+        by_harness = {name: [t for t in trials if t.harness == name] for name in (None, "rules")}
+        assert [len(group) for group in by_harness.values()] == [4, 4]
+        assert all(t.passed for t in by_harness["rules"])
+        assert not any(t.passed for t in by_harness[None])
+        assert {t.harness_digest for t in by_harness["rules"]} == {
+            HarnessLoader().load(rules).digest
+        }
+        assert output.count("[rules]") == 4
+        assert "remember-other: rules 1.00, none 0.50, delta +0.50" in output
+        # The failing baseline gates nothing, so both cases count as passing.
+        assert "2 cases, 100% at or above" in output
+
+    def test_compare_takes_two_harnesses_of_the_run(
+        self, evals: Path, rules: Path, fake_claude: Path, tmp_path: Path
+    ) -> None:
+        self.run_ab(evals, rules, fake_claude)
+        run_id, _ = self.stored(tmp_path)
+
+        unnamed = CliRunner().invoke(app, ["compare", run_id])
+        named = CliRunner().invoke(
+            app, ["compare", run_id, "--harness", "none", "--harness", "rules"]
+        )
+
+        assert unnamed.exit_code == 2
+        assert f"run {run_id} holds harnesses none, rules" in unnamed.output
+        assert named.exit_code == 0, named.output
+        assert "delta score +0.50 (95% CI +0.50 to +0.50) over 2 cases" in named.output
+
+    def test_plan_counts_trials_per_harness(self, evals: Path, rules: Path) -> None:
+        argv = ["plan", str(evals), "--runs", "1", "--harness", "none", "--harness", str(rules)]
+
+        result = CliRunner().invoke(app, argv)
+
+        assert result.exit_code == 0, result.output
+        assert "plan: 2 cases, 4 trials" in result.output
+
+    def test_driver_that_cannot_load_a_part_stops_before_any_trial(
+        self, evals: Path, rules: Path
+    ) -> None:
+        argv = ["plan", str(evals), "--driver", "codex", "--harness", str(rules)]
+
+        result = CliRunner().invoke(app, argv)
+
+        assert result.exit_code == 2
+        assert "codex can't load harness rules: instructions" in result.output
+
+    def test_same_harness_twice_exits_2(self, evals: Path, rules: Path) -> None:
+        result = CliRunner().invoke(
+            app, ["plan", str(evals), "--harness", str(rules), "--harness", str(rules)]
+        )
+
+        assert result.exit_code == 2
+        assert "--harness names a harness twice: rules" in result.output

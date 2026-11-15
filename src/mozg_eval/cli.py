@@ -2,6 +2,7 @@ import asyncio
 import json
 import os
 import shutil
+from collections.abc import Mapping, Sequence
 from enum import StrEnum
 from pathlib import Path
 from typing import Annotated
@@ -42,13 +43,14 @@ from mozg_eval.runner.suite import (
 )
 from mozg_eval.spec.harness import (
     HARNESS_FILENAME,
+    Harness,
     HarnessLoader,
     HarnessLoadError,
     HarnessManifest,
 )
 from mozg_eval.spec.loader import CASE_FILENAME, CaseLoader, CaseLoadError
 from mozg_eval.spec.models import Case
-from mozg_eval.storage.base import DEFAULT_WORKSPACE
+from mozg_eval.storage.base import DEFAULT_WORKSPACE, TrialRecord
 from mozg_eval.storage.config import StorageConfig, open_stores
 
 app = typer.Typer(
@@ -74,6 +76,17 @@ DRIVERS: dict[DriverName, type[ClaudeDriver | CodexDriver | OpenCodeDriver | PiD
 
 import_app = typer.Typer(help="Convert cases from other eval tools.", no_args_is_help=True)
 app.add_typer(import_app, name="import")
+
+# `--harness none` stands for the agent's own setup, so it can be the baseline of an A/B run.
+NO_HARNESS = "none"
+HarnessOption = Annotated[
+    list[str] | None,
+    typer.Option(
+        "--harness",
+        help="A harness directory, or none for the agent's own setup; repeatable. Every case "
+        "runs once per harness, and the first is the baseline the others are compared against.",
+    ),
+]
 
 JudgeOption = Annotated[
     str | None,
@@ -198,15 +211,18 @@ def run(
             help=f"Upload the run to ${SERVER_ENV} with ${TOKEN_ENV}; a failure is reported."
         ),
     ] = False,
+    harness: HarnessOption = None,
 ) -> None:
     """Run and grade cases on one agent.
 
     Exit 0 when every case meets the threshold, 1 when one doesn't, 2 when a trial errored
     or the spend cap stopped the run, 130 when interrupted.
-    With --ablation only the with-bundle arm counts toward the threshold. A failed --push
-    never changes the exit code; `mzeval push RUN` retries it.
+    With --ablation only the with-bundle arm counts toward the threshold, and with several
+    --harness the baseline doesn't count. A failed --push never changes the exit code;
+    `mzeval push RUN` retries it.
     """
     target = _push_target() if push else None
+    setups = _load_setups(harness)
     files = CaseLoader.discover(paths)
     if not files:
         typer.echo(f"no {CASE_FILENAME} found under: {', '.join(map(str, paths))}", err=True)
@@ -232,7 +248,7 @@ def run(
     )
     try:
         select = CaseFilter(tuple(case or ()), tuple(tag or ()))
-        options = RunOptions(ablation, select, jobs, max_cost_usd)
+        options = RunOptions(ablation, select, jobs, max_cost_usd, setups)
         result = asyncio.run(suite.run(files, options))
     except JudgeSetupError as exc:
         typer.echo(f"judge: {exc}", err=True)
@@ -257,31 +273,44 @@ def run(
     finally:
         stores.results.close()
     record, trials = result.run, result.trials
+    names = [_setup_name(setup) for setup in setups] or [NO_HARNESS]
+    several = len(names) > 1
     for name, reason in sorted(result.skipped.items()):
         typer.echo(f"SKIP {name}: {reason}")
     for trial in trials:
         cost = "n/a" if trial.record.cost_usd is None else f"${trial.record.cost_usd:.4f}"
         skills = ", ".join(trial.skills) or "none"
         verdict = "PASS" if trial.record.passed else "FAIL"
-        arm = f" [{trial.record.arm}]" if ablation else ""
+        tags = [_harness_of(trial.record)] if several else []
+        tags += [trial.record.arm] if ablation else []
+        label = f" [{', '.join(tags)}]" if tags else ""
         typer.echo(
-            f"{verdict} {trial.case} #{trial.record.repeat}{arm}: {trial.record.status}, "
+            f"{verdict} {trial.case} #{trial.record.repeat}{label}: {trial.record.status}, "
             f"skills: {skills}, {cost}"
         )
         for grade in trial.grades:
             if grade.verdict == "fail":
                 typer.echo(f"    {grade.name}: {grade.detail}")
+    grades = grades_of(trials)
     if ablation:
-        grades = grades_of(trials)
-        by_arm = {
-            arm: arm_scores([t.record for t in trials if t.record.arm == arm], grades, True)
-            for arm in ("with", "without")
-        }
-        for line in Comparison.of(by_arm["with"], by_arm["without"]).summary("with", "without"):
-            typer.echo(line)
-    _echo_routing(files, [t for t in trials if t.record.arm == "with"])
+        for name in names:
+            mine = [t.record for t in trials if _harness_of(t.record) == name]
+            with_arm, without_arm = (
+                arm_scores([r for r in mine if r.arm == arm], grades, True)
+                for arm in ("with", "without")
+            )
+            if several:
+                typer.echo(f"harness {name}:")
+            for line in Comparison.of(with_arm, without_arm).summary("with", "without"):
+                typer.echo(line)
+    with_bundle = [t for t in trials if t.record.arm == "with"]
+    if several:
+        _echo_harness_comparison([t.record for t in with_bundle], grades, names)
+    # The baseline harness is a reference point, like the without arm, so it gates nothing.
+    gated_trials = [t for t in with_bundle if not several or _harness_of(t.record) != names[0]]
+    _echo_routing(files, gated_trials)
     _echo_spend(trials, agents=True)
-    gated = [t.record for t in trials if t.record.arm == "with"]
+    gated = [t.record for t in gated_trials]
     if junit is not None:
         report = JUnitReport(f"mzeval.{driver.value}", threshold)
         junit.parent.mkdir(parents=True, exist_ok=True)
@@ -331,6 +360,48 @@ def _push_run(target: PushTarget, run_id: str) -> bool:
         stores.results.close()
     typer.echo(f"pushed run {run_id}: {count} trials to {target.server}")
     return True
+
+
+def _setup_name(setup: Harness | None) -> str:
+    return NO_HARNESS if setup is None else setup.name
+
+
+def _harness_of(trial: TrialRecord) -> str:
+    return trial.harness or NO_HARNESS
+
+
+def _load_setups(values: list[str] | None) -> tuple[Harness | None, ...]:
+    """The --harness values loaded in order; a broken harness or a repeated name exits 2."""
+    loader = HarnessLoader()
+    setups: list[Harness | None] = []
+    for value in values or ():
+        if value == NO_HARNESS:
+            setups.append(None)
+            continue
+        try:
+            setups.append(loader.load(Path(value)))
+        except HarnessLoadError as exc:
+            for issue in exc.issues:
+                typer.echo(str(issue), err=True)
+            raise typer.Exit(2) from exc
+    names = [_setup_name(setup) for setup in setups]
+    if repeated := sorted({name for name in names if names.count(name) > 1}):
+        typer.echo(f"--harness names a harness twice: {', '.join(repeated)}", err=True)
+        raise typer.Exit(2)
+    return tuple(setups)
+
+
+def _echo_harness_comparison(
+    trials: list[TrialRecord], grades: Mapping[str, Sequence[GradeResult]], names: list[str]
+) -> None:
+    """Each harness against the first, case by case, on the with-bundle arm."""
+    scores = {
+        name: arm_scores([t for t in trials if _harness_of(t) == name], grades, False)
+        for name in names
+    }
+    for name in names[1:]:
+        for line in Comparison.of(scores[name], scores[names[0]]).summary(name, names[0]):
+            typer.echo(line)
 
 
 def grades_of(trials: list[TrialSummary]) -> dict[str, list[GradeResult]]:
@@ -427,8 +498,15 @@ def plan(
     ablation: Annotated[
         bool, typer.Option(help="Plan the without-bundle arm too, as run --ablation would.")
     ] = False,
+    harness: HarnessOption = None,
 ) -> None:
     """Validate cases and estimate a run's cost from stored runs; no agent starts."""
+    setups = _load_setups(harness)
+    support = DriverSupport(driver.value, DRIVERS[driver].capabilities)
+    for setup in filter(None, setups):
+        if gap := support.harness_gap(setup):
+            typer.echo(gap, err=True)
+            raise typer.Exit(2)
     files = CaseLoader.discover(paths)
     if not files:
         typer.echo(f"no {CASE_FILENAME} found under: {', '.join(map(str, paths))}", err=True)
@@ -445,8 +523,8 @@ def plan(
         history = CostHistory.load(stores.results, DEFAULT_WORKSPACE, driver.value)
     finally:
         stores.results.close()
-    planner = Planner(DriverSupport(driver.value, DRIVERS[driver].capabilities), history)
-    for line in Planner.summary(planner.estimate(cases, runs, ablation)):
+    planner = Planner(support, history)
+    for line in Planner.summary(planner.estimate(cases, runs, ablation, len(setups))):
         typer.echo(line)
 
 
@@ -457,8 +535,18 @@ def compare(
         str | None,
         typer.Argument(help="A second stored run to compare against; default: the run's own arms."),
     ] = None,
+    harness: Annotated[
+        list[str] | None,
+        typer.Option(
+            "--harness",
+            help="Two harnesses of the run, baseline first, to compare with each other.",
+        ),
+    ] = None,
 ) -> None:
-    """Compare scores per case: a run's with/without arms, or a run against a baseline run."""
+    """Compare scores per case: a run's arms or harnesses, or a run against a baseline run."""
+    if harness and baseline:
+        typer.echo("--harness compares within one run; leave out the baseline run", err=True)
+        raise typer.Exit(2)
     stores = open_stores(StorageConfig.load(Path.cwd()))
     try:
         loaded = {}
@@ -473,6 +561,19 @@ def compare(
     finally:
         stores.results.close()
     trials, grades = loaded[run_id]
+    names = sorted({_harness_of(t) for t in trials})
+    if baseline is None and (harness or len(names) > 1):
+        if len(harness or []) != 2 or not set(harness or []) <= set(names):
+            typer.echo(
+                f"run {run_id} holds harnesses {', '.join(names)}; "
+                "name two with --harness BASELINE --harness OTHER",
+                err=True,
+            )
+            raise typer.Exit(2)
+        assert harness is not None
+        with_trials = [t for t in trials if t.arm == "with"]
+        _echo_harness_comparison(with_trials, grades, harness)
+        return
     if baseline is None:
         with_arm = arm_scores([t for t in trials if t.arm == "with"], grades, True)
         without_arm = arm_scores([t for t in trials if t.arm == "without"], grades, True)

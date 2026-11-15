@@ -47,6 +47,16 @@ class TestSuiteStats:
         ]
         return SuiteStats.of(trials, threshold=1.0)
 
+    def test_each_harness_of_a_case_is_its_own_row(self) -> None:
+        a, b = (
+            trial("steady", 1, ok).model_copy(update={"harness": h})
+            for ok, h in [(True, "a"), (False, "b")]
+        )
+
+        stats = SuiteStats.of([a, b], threshold=1.0)
+
+        assert [(c.case, c.passes) for c in stats.cases] == [("steady @a", 1), ("steady @b", 0)]
+
     def test_groups_repeats_by_case(self, stats: SuiteStats) -> None:
         by_case = {c.case: (c.passes, c.runs, c.pass_all, c.flaky) for c in stats.cases}
 

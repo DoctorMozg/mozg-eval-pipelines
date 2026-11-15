@@ -55,7 +55,7 @@ class Planner:
         self.history = history
 
     def estimate(
-        self, cases: Sequence[Case], runs: int | None, ablation: bool
+        self, cases: Sequence[Case], runs: int | None, ablation: bool, harnesses: int = 1
     ) -> list[CaseEstimate]:
         estimates = []
         for case in cases:
@@ -63,7 +63,7 @@ class Planner:
                 estimates.append(CaseEstimate(case=case.name, trials=0, skipped=reason))
                 continue
             arms = SuiteRunner.arms(case, ablation)
-            trials = (runs or case.execution.runs) * len(arms)
+            trials = (runs or case.execution.runs) * len(arms) * max(harnesses, 1)
             mean = self.history.mean(case.name)
             estimates.append(CaseEstimate(case=case.name, trials=trials, per_trial=mean))
         return estimates

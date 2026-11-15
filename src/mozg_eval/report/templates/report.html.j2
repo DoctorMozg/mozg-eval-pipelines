@@ -49,7 +49,7 @@
 <table>
   <tr><th>case</th><th>repeat</th><th>grader</th><th>detail</th></tr>
   {% for trial, grade in failures %}
-  <tr><td>{{ trial.case }}</td><td>{{ trial.repeat }}</td><td>{{ grade.name }}</td>
+  <tr><td>{{ trial.label }}</td><td>{{ trial.repeat }}</td><td>{{ grade.name }}</td>
       <td class="detail">{{ grade.detail }}</td></tr>
   {% endfor %}
 </table>

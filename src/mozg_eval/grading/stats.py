@@ -51,7 +51,7 @@ class SuiteStats(StrictModel):
         """Trials without a verdict count as failures, so an ungraded run can't look green."""
         if not 0 < threshold <= 1:
             raise ValueError(f"threshold {threshold} must be within (0, 1]")
-        by_case = groupby(sorted(trials, key=lambda t: t.case), key=lambda t: t.case)
+        by_case = groupby(sorted(trials, key=lambda t: t.label), key=lambda t: t.label)
         cases = []
         for case, group in by_case:
             runs = list(group)
