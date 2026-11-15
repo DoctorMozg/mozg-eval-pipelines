@@ -1,6 +1,6 @@
 # mozg-eval: proposal
 
-Status: revision 5, 2026-11-14. Phase A (§8 milestones 01 to 14) is built, apart from milestone 09
+Status: revision 6, 2026-11-15. Phase A (§8 milestones 01 to 15) is built, apart from milestone 09
 (deferred) and `renormalize`; the "As built" notes record where the code differs from the plan.
 Phase B and C are not built.
 
@@ -553,6 +553,19 @@ As built (before milestone 15): `run` gained the three knobs the plugin repos' `
 trials through a semaphore inside one task group, so a fixture error cancels the trials still
 running. `--max-cost-usd` is one `SpendCap` shared by every trial's `CostGuard` plus the judge's
 spend; a trial that crosses it is cancelled, later ones never start, and the run exits 2.
+
+As built (milestone 15): both plugin repos keep their 1.1 `case.yaml` files as the source.
+`make eval PLUGIN=…` imports them afresh into `.mz/mzeval-cases/` and runs mzeval pinned to a commit
+through `uvx --from git+…@<sha>`. claude-mozg-pipelines lost its Codex runner (`EVAL_DRIVER=codex`
+replaces it) and the per-suite `flags` file, since the Claude driver bypasses permissions and offers
+each case its `allowed_tools`. Its mutation runner and the hook prechecks stay until mzeval has an
+equivalent. mozg-video-plugins gained `make eval`, and its `make lint` imports and lints every
+plugin's cases. Its per-plugin linters dropped only the checks the strict import now makes
+(mapping, schema version, unknown keys, grader types and options) and keep their content rules.
+The cutover found two gaps, both fixed: an empty `tools` list now offers no tool instead of the
+default set, and the turn guard no longer counts a subagent's messages. The verify ran on a stub
+agent, so it covers import, selection, grading and exit codes for free. No paid run has gone
+through `make eval` yet.
 
 ### 4.11 Runner: a thin executor, run locally or in CI
 
