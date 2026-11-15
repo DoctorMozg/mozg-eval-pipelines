@@ -50,6 +50,21 @@ class TestLint:
         assert result.exit_code == 1
         assert f"{case}:5: unknown key 'bogus' in <case>" in result.stderr
 
+    def test_warning_is_printed_but_does_not_fail(self, runner: CliRunner, tmp_path: Path) -> None:
+        hooks = tmp_path / "plugin" / "hooks"
+        hooks.mkdir(parents=True)
+        (hooks / "hooks.json").write_text(json.dumps({"hooks": {"Stop": [], "SessionStart": []}}))
+        (tmp_path / "case.mzeval.yaml").write_text(
+            "schema: mzeval/2\nname: x\nkind: behaviour\nbundle: [plugin]\nexecution: {prompt: p}\n"
+            "graders:\n  - {name: fired, type: hook_fired}\n"
+        )
+
+        result = runner.invoke(app, ["lint", str(tmp_path)])
+
+        assert result.exit_code == 0
+        assert "warning: " in result.stderr
+        assert "hook_fired grader fired has no event" in result.stderr
+
     def test_directory_without_cases_is_a_usage_error(
         self, runner: CliRunner, tmp_path: Path
     ) -> None:

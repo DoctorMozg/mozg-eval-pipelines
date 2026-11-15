@@ -49,6 +49,7 @@ from mozg_eval.spec.harness import (
     HarnessLoadError,
     HarnessManifest,
 )
+from mozg_eval.spec.lint import CaseLinter
 from mozg_eval.spec.loader import CASE_FILENAME, CaseLoader, CaseLoadError
 from mozg_eval.spec.models import Case
 from mozg_eval.storage.base import DEFAULT_WORKSPACE, TrialRecord
@@ -155,11 +156,14 @@ def lint(
     invalid = 0
     for path in case_files:
         try:
-            cases.load(path)
+            case = cases.load(path)
         except CaseLoadError as exc:
             invalid += 1
             for issue in exc.issues:
                 typer.echo(str(issue), err=True)
+            continue
+        for issue in CaseLinter().warnings(path, case):
+            typer.echo(f"warning: {issue}", err=True)
     bad_harnesses = 0
     for root in harness_dirs:
         try:
