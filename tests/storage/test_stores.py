@@ -197,6 +197,15 @@ class TestResultStoreContract:
 
         assert results.list_trials("local", "r1") == [trial_record("t1")]
 
+    def test_trial_keeps_its_harness(self, results: ResultStore) -> None:
+        results.add_run("local", run_record("r1"))
+        trial = trial_record("t1").model_copy(
+            update={"harness": "rules-v2", "harness_digest": "0123abcd"}
+        )
+        results.add_trial("local", trial)
+
+        assert results.list_trials("local", "r1") == [trial]
+
     def test_trial_of_unknown_run_is_rejected(self, results: ResultStore) -> None:
         with pytest.raises(IntegrityError):
             results.add_trial("local", trial_record("t1", run="nope"))

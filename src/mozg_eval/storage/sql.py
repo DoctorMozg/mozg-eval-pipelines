@@ -67,6 +67,8 @@ trials = sa.Table(
     sa.Column("status", sa.String, nullable=False),
     sa.Column("cost_usd", sa.Float),
     sa.Column("passed", sa.Boolean),
+    sa.Column("harness", sa.String),
+    sa.Column("harness_digest", sa.String),
     sa.ForeignKeyConstraint(["workspace_id", "run_id"], ["runs.workspace_id", "runs.id"]),
     sa.Index("ix_trials_run", "workspace_id", "run_id"),
 )
@@ -180,6 +182,8 @@ class SqlResultStore:
                     status=trial.status,
                     cost_usd=trial.cost_usd,
                     passed=trial.passed,
+                    harness=trial.harness,
+                    harness_digest=trial.harness_digest,
                 )
             )
 
@@ -195,6 +199,8 @@ class SqlResultStore:
                 trials.c.status,
                 trials.c.cost_usd,
                 trials.c.passed,
+                trials.c.harness,
+                trials.c.harness_digest,
             )
             .where(trials.c.workspace_id == ws, trials.c.run_id == run)
             .order_by(trials.c.id)

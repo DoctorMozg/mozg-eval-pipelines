@@ -89,6 +89,13 @@ class TrialRecord(StrictModel):
     status: EndStatus
     cost_usd: NonNegativeFloat | None = None
     passed: bool | None = Field(default=None, description="None until the trial is graded")
+    harness: str | None = Field(default=None, description="name of the harness the trial loaded")
+    harness_digest: str | None = Field(default=None, description="hash of that harness's files")
+
+    @property
+    def label(self) -> str:
+        """The case as reports group it: one row per case and harness."""
+        return self.case if self.harness is None else f"{self.case} @{self.harness}"
 
 
 class EventStore(Protocol):
