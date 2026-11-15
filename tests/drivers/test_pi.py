@@ -193,6 +193,13 @@ class TestPiDriver:
 
         assert argv[argv.index("--tools") + 1] == "read,find,edit"
 
+    def test_empty_tools_turn_every_tool_off(self, run: Run, tmp_path: Path) -> None:
+        run(tools=[])
+        argv = recorded(tmp_path)["argv"]
+
+        assert "--no-tools" in argv
+        assert "--tools" not in argv
+
     def test_exit_before_settling_is_an_error_end(self, run: Run, tmp_path: Path) -> None:
         empty = tmp_path / "empty.jsonl"
         empty.write_text("")

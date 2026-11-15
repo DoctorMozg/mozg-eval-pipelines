@@ -301,7 +301,7 @@ class CodexDriver:
         self.raw_dir.mkdir(parents=True, exist_ok=True)
         env = self._prepare_home() | request.env
         env["MZEVAL_HOOK_LOG"] = str(self.raw_dir / "hooks.jsonl")
-        if request.tools:
+        if request.tools is not None:
             tools = ", ".join(request.tools)
             yield Log(level="info", text=f"codex offers its own tools; [{tools}] is not enforced")
         try:

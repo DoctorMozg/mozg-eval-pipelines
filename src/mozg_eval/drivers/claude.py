@@ -213,7 +213,7 @@ class ClaudeDriver:
             "--permission-mode=bypassPermissions",
             f"--max-turns={request.limits.max_turns}",
         ]
-        if request.tools:
+        if request.tools is not None:
             # The available set, not an approval list: extra tools change which skill fires.
             argv.append("--tools=" + ",".join(CLAUDE_TOOLS[kind] for kind in request.tools))
         argv += [f"--plugin-dir={plugin}" for plugin in request.plugins]

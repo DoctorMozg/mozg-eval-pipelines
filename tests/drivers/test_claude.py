@@ -174,7 +174,7 @@ def run(tmp_path: Path, real_config: Path, fake_claude: Path) -> Run:
                 "FAKE_RECORD": str(tmp_path / "record.json"),
             },
             plugins=["/repo/plugins/mz-memory"],
-            tools=tools or [],
+            tools=tools,
             model="haiku",
             limits=Limits(max_turns=4, timeout_s=timeout_s),
         )
@@ -205,10 +205,15 @@ class TestClaudeDriver:
         assert "--plugin-dir=/repo/plugins/mz-memory" in argv
         assert "--model=haiku" in argv
 
-    def test_no_tools_means_the_default_set(self, run: Run, tmp_path: Path) -> None:
+    def test_omitted_tools_mean_the_default_set(self, run: Run, tmp_path: Path) -> None:
         run()
 
         assert not any(a.startswith("--tools") for a in recorded(tmp_path)["argv"])
+
+    def test_empty_tools_turn_every_tool_off(self, run: Run, tmp_path: Path) -> None:
+        run(tools=[])
+
+        assert [a for a in recorded(tmp_path)["argv"] if a.startswith("--tools")] == ["--tools="]
 
     def test_runs_in_a_temp_home_with_linked_credentials(
         self, run: Run, tmp_path: Path, real_config: Path

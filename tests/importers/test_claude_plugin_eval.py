@@ -329,6 +329,18 @@ class TestCaseFields:
             "runs": 3,
         }
 
+    def test_empty_allowed_tools_stay_empty(self, convert: Convert) -> None:
+        data = case_11([routing("fires", "render")], tags=["fire"])
+        data["execution"]["allowed_tools"] = []
+
+        assert convert(data).case["execution"]["tools"] == []
+
+    def test_missing_allowed_tools_leave_the_default_set(self, convert: Convert) -> None:
+        data = case_11([routing("fires", "render")], tags=["fire"])
+        del data["execution"]["allowed_tools"]
+
+        assert "tools" not in convert(data).case["execution"]
+
     def test_missing_plugins_resolve_to_the_enclosing_plugin(
         self, convert: Convert, tmp_path: Path
     ) -> None:

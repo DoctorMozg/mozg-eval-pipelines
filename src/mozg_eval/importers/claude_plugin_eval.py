@@ -297,12 +297,12 @@ class _CaseConverter:
 
     def _execution(self, raw: dict[str, Any]) -> dict[str, Any]:
         execution: dict[str, Any] = {"prompt": raw.get("prompt", "")}
-        tools = []
-        for tool in raw.get("allowed_tools") or []:
-            if tool not in CLAUDE_TOOL_KINDS:
-                raise CaseImportError(f"{self.case_file}: no canonical tool kind for {tool!r}")
-            tools.append(CLAUDE_TOOL_KINDS[tool])
-        if tools:
+        if raw.get("allowed_tools") is not None:
+            tools = []
+            for tool in raw["allowed_tools"]:
+                if tool not in CLAUDE_TOOL_KINDS:
+                    raise CaseImportError(f"{self.case_file}: no canonical tool kind for {tool!r}")
+                tools.append(CLAUDE_TOOL_KINDS[tool])
             execution["tools"] = tools
         renames = {"max_turns": "max_turns", "timeout_seconds": "timeout_s"}
         for old, new in renames.items():

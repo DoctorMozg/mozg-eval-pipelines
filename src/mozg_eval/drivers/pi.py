@@ -200,7 +200,9 @@ class PiDriver:
             provider, _, model = request.model.partition("/")
             # OpenRouter ids hold a slash of their own, so name the provider apart.
             argv += ["--provider", provider, "--model", model] if model else ["--model", provider]
-        if request.tools:
+        if request.tools == []:
+            argv.append("--no-tools")
+        elif request.tools:
             names = dict.fromkeys(_PI_TOOLS[k] for k in request.tools if k in _PI_TOOLS)
             argv += ["--tools", ",".join(names)]
         if request.append_system_prompt:

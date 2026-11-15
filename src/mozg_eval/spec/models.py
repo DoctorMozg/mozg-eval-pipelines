@@ -231,7 +231,7 @@ type EnvName = Annotated[str, Field(pattern=r"^[A-Z][A-Z0-9_]*$")]
 
 class Execution(StrictModel):
     prompt: Name
-    tools: list[ToolKind] = []
+    tools: list[ToolKind] | None = None  # None is the agent's default set; [] offers no tool
     max_turns: Annotated[int, Field(ge=1, le=200)] = 10
     timeout_s: Annotated[int, Field(ge=1, le=3600)] = 300
     runs: Annotated[int, Field(ge=1, le=50)] = 3

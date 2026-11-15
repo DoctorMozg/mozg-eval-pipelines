@@ -56,8 +56,8 @@ class DriverSupport:
         if case.history_file or case.add_dirs:
             return "history_file and add_dirs are not supported yet"
         tools = case.execution.tools
-        if not self.capabilities.host_shell and (not tools or "shell" in tools):
-            # An empty tool list means the agent's defaults, which include its shell.
+        if not self.capabilities.host_shell and (tools is None or "shell" in tools):
+            # No tool list means the agent's defaults, which include its shell.
             return f"{self.driver} has no sandbox; cases with shell wait for Docker isolation"
         if not self.applicable(case):
             # Every grade would be n/a, so the trial could only pass vacuously.

@@ -172,6 +172,13 @@ class TestOpenCodeDriver:
             {"action": "skill", "resource": "*", "effect": "allow"},
         ]
 
+    def test_empty_tools_deny_everything(self, run: Run, tmp_path: Path) -> None:
+        run(tools=[])
+
+        assert config(tmp_path)["permissions"] == [
+            {"action": "*", "resource": "*", "effect": "deny"}
+        ]
+
     def test_failed_exit_is_an_error_end(self, run: Run) -> None:
         events = [e.payload for e in run(FAKE_EXIT="1")]
 

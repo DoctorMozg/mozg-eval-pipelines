@@ -72,9 +72,9 @@ class TrialRequest(StrictModel):
         default_factory=list,
         description="plugin directories the case loads; each driver installs them its own way",
     )
-    tools: list[ToolKind] = Field(
-        default_factory=list,
-        description="the only tools offered; empty means the agent's default set",
+    tools: list[ToolKind] | None = Field(
+        default=None,
+        description="the only tools offered; null means the agent's default set, empty means none",
     )
     model: str | None = None
     append_system_prompt: str | None = None

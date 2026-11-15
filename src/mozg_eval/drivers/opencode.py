@@ -237,7 +237,7 @@ class OpenCodeDriver:
             str(copies.add(Path(plugin)) / "skills") for plugin in request.plugins
         ]
         config: dict[str, JsonValue] = {"skills": skills}
-        if request.tools:
+        if request.tools is not None:
             # Last match wins: deny everything, then allow the case's own tools.
             allowed = sorted({_ACTIONS[kind] for kind in request.tools})
             rules: list[JsonValue] = [{"action": "*", "resource": "*", "effect": "deny"}]

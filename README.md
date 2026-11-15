@@ -101,7 +101,7 @@ drivers: { exclude: [pi] }
 ```
 
 - `expect.skill` is graded as labelled routing data. It feeds per-skill precision, recall and the confusion matrix.
-- `bundle` lists the plugin directories loaded for the case. `tools` are canonical kinds (`skill`, `subagent`, `read`, `write`, `edit`, `glob`, `grep`, `shell`, `ask_user`) and are the only tools the session gets.
+- `bundle` lists the plugin directories loaded for the case. `tools` are canonical kinds (`skill`, `subagent`, `read`, `write`, `edit`, `glob`, `grep`, `shell`, `ask_user`) and are the only tools the session gets. Leave `tools` out for the agent's default set, or write `tools: []` for none.
 - Counts are `min`/`max` (default `min: 1`). `arm: both | with` decides whether a grader counts in the without-bundle arm of an ablation. `weight`, `runs` (default 3), `max_turns` (10) and `timeout_s` (300) carry over from `claude plugin eval` 1.1.
 - `fixture` runs a script that prepares the workspace. `drivers: { only: [...], exclude: [...] }` limits where a case runs.
 - A grader a driver can't evaluate grades `n/a`, never a vacuous pass.
