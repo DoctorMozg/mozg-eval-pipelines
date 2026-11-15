@@ -28,6 +28,8 @@ from mozg_eval.spec.models import ToolKind
 from mozg_eval.storage.disk import DiskEventStore
 
 SKILL_FIRE = Path(__file__).with_name("fixtures") / "claude_skill_fire.jsonl"
+# A real haiku run whose Agent call went to the background, so the stream ends in two results.
+BACKGROUND_AGENT = SKILL_FIRE.with_name("claude_background_agent.jsonl")
 
 
 def replay(path: Path) -> list[Payload]:
@@ -79,12 +81,6 @@ class TestNormalize:
         events = line(type="assistant", message={"content": [block]})
 
         assert events[1] == SubagentSpawned(subagent="pipeline-researcher")
-
-    def test_subagent_text_names_its_parent_call(self) -> None:
-        text = {"type": "text", "text": "found it"}
-        events = line(type="assistant", parent_tool_use_id="toolu_1", message={"content": [text]})
-
-        assert events == [Message(role="assistant", text="found it", parent="toolu_1")]
 
     def test_shell_result_with_block_content(self) -> None:
         call = {"type": "tool_use", "id": "t1", "name": "Bash", "input": {"command": "ls"}}
@@ -148,7 +144,11 @@ class TestIsolatedEnv:
 
 class Run(Protocol):
     def __call__(
-        self, mode: str = "replay", tools: list[ToolKind] | None = None, timeout_s: int = 30
+        self,
+        mode: str = "replay",
+        tools: list[ToolKind] | None = None,
+        timeout_s: int = 30,
+        fixture: Path = SKILL_FIRE,
     ) -> list[Event]: ...
 
 
@@ -168,7 +168,10 @@ def run(tmp_path: Path, real_config: Path, fake_claude: Path) -> Run:
     workspace.mkdir()
 
     def go(
-        mode: str = "replay", tools: list[ToolKind] | None = None, timeout_s: int = 30
+        mode: str = "replay",
+        tools: list[ToolKind] | None = None,
+        timeout_s: int = 30,
+        fixture: Path = SKILL_FIRE,
     ) -> list[Event]:
         request = TrialRequest(
             trial="t1",
@@ -176,7 +179,7 @@ def run(tmp_path: Path, real_config: Path, fake_claude: Path) -> Run:
             workspace=str(workspace),
             env={
                 "FAKE_MODE": mode,
-                "FAKE_FIXTURE": str(SKILL_FIRE),
+                "FAKE_FIXTURE": str(fixture),
                 "FAKE_RECORD": str(tmp_path / "record.json"),
             },
             plugins=["/repo/plugins/mz-memory"],
@@ -210,6 +213,15 @@ class TestClaudeDriver:
         assert [a for a in argv if a.startswith("--tools")] == ["--tools=Skill"]
         assert "--plugin-dir=/repo/plugins/mz-memory" in argv
         assert "--model=haiku" in argv
+
+    def test_background_agent_bills_the_session_total_once(self, run: Run) -> None:
+        events = [e.payload for e in run(fixture=BACKGROUND_AGENT)]
+
+        costs = [p.cost_usd for p in events if isinstance(p, Usage) and p.cost_usd is not None]
+        assert sum(costs) == pytest.approx(0.032088295)
+        assert events[-1] == End(status="ok")
+        replies = [p.text for p in events if isinstance(p, Message)]
+        assert replies[-1].startswith("The subagent returned three distinct facts")
 
     def test_omitted_tools_mean_the_default_set(self, run: Run, tmp_path: Path) -> None:
         run()

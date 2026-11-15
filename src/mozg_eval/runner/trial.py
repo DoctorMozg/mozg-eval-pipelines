@@ -13,7 +13,6 @@ from mozg_eval.events.models import (
     EndStatus,
     Error,
     Event,
-    Message,
     Payload,
     Setting,
     Start,
@@ -59,22 +58,6 @@ class CostGuard:
             if self.cap.spent > self.cap.max_usd:
                 self.cap.tripped = True
                 return f"cost ${self.cap.spent:.2f} is over the ${self.cap.max_usd:.2f} cap"
-        return None
-
-
-class TurnGuard:
-    """Backs up the driver's own max_turns, in case the agent CLI ignores it."""
-
-    def __init__(self, max_turns: int) -> None:
-        self.max_turns = max_turns
-        self.turns = 0
-
-    def check(self, payload: Payload) -> str | None:
-        # A subagent runs its own turns, which the agent's max_turns doesn't count either.
-        if isinstance(payload, Message) and payload.role == "assistant" and payload.parent is None:
-            self.turns += 1
-            if self.turns > self.max_turns:
-                return f"turn {self.turns} is over max_turns {self.max_turns}"
         return None
 
 

@@ -20,7 +20,7 @@ from mozg_eval.grading.support import DriverSupport
 from mozg_eval.judge.grading import TrialJudge, merged
 from mozg_eval.runner.checks import WorkspaceChecks, needs_workspace, snapshot
 from mozg_eval.runner.settings import resolve_settings
-from mozg_eval.runner.trial import CostGuard, Guard, SpendCap, TrialRunner, TurnGuard
+from mozg_eval.runner.trial import CostGuard, Guard, SpendCap, TrialRunner
 from mozg_eval.spec.loader import CaseLoader
 from mozg_eval.spec.models import Case
 from mozg_eval.storage.base import ArtifactRef, RunRecord, TrialArm, TrialRecord, new_id
@@ -228,7 +228,8 @@ class SuiteRunner:
                 append_system_prompt=execution.append_system_prompt,
                 limits=Limits(max_turns=execution.max_turns, timeout_s=execution.timeout_s),
             )
-            guards: list[Guard] = [TurnGuard(execution.max_turns)]
+            # Every driver enforces max_turns itself; Claude counts it per segment of a session.
+            guards: list[Guard] = []
             if cap is not None:
                 guards.append(CostGuard(cap))
             runner = TrialRunner(

@@ -75,7 +75,6 @@ class _Usage(_Loose):
 class StreamLine(_Loose):
     type: str
     subtype: str | None = None
-    parent_tool_use_id: str | None = None
     message: _Message | None = None
     claude_code_version: str = ""
     model: str = ""
@@ -128,8 +127,7 @@ def normalize(line: StreamLine) -> list[Payload]:
             events: list[Payload] = []
             for block in blocks:
                 if block.type == "text" and block.text:
-                    parent = line.parent_tool_use_id
-                    events.append(Message(role="assistant", text=block.text, parent=parent))
+                    events.append(Message(role="assistant", text=block.text))
                 elif block.type == "tool_use":
                     events.extend(_tool_call(block))
             return events
@@ -241,6 +239,7 @@ class ClaudeDriver:
         lines = self._child.lines(
             self.command(request), cwd=request.workspace, env=env, stdin=request.prompt.encode()
         )
+        billed = 0.0
         async for raw_line in lines:
             try:
                 line = StreamLine.model_validate_json(raw_line)
@@ -249,6 +248,11 @@ class ClaudeDriver:
                 yield Log(level="warning", text=f"claude printed a non-event line: {text}")
                 continue
             for payload in normalize(line):
+                if isinstance(payload, Usage) and payload.cost_usd is not None:
+                    # Each result reports the running total; a background agent adds a second one.
+                    total = payload.cost_usd
+                    payload = payload.model_copy(update={"cost_usd": total - billed})
+                    billed = total
                 yield payload
         code = self._child.returncode
         if code is not None and code > 0:

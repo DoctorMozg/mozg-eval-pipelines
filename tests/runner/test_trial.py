@@ -12,7 +12,6 @@ from mozg_eval.events.models import (
     End,
     Error,
     Event,
-    Message,
     Start,
     ToolCall,
     ToolResult,
@@ -25,7 +24,6 @@ from mozg_eval.runner.trial import (
     Guard,
     SpendCap,
     TrialRunner,
-    TurnGuard,
 )
 from mozg_eval.spec.models import Execution
 from mozg_eval.storage.disk import DiskEventStore
@@ -140,23 +138,6 @@ class TestTrialRunner:
 
 
 class TestGuards:
-    def test_turn_guard_trips_after_max_turns(self) -> None:
-        guard = TurnGuard(2)
-        turn = Message(role="assistant", text="hi")
-
-        checks = [guard.check(turn) for _ in range(3)]
-
-        assert checks == [None, None, "turn 3 is over max_turns 2"]
-
-    def test_turn_guard_skips_subagent_messages(self) -> None:
-        guard = TurnGuard(1)
-        subagent = Message(role="assistant", text="found it", parent="toolu_1")
-
-        checks = [guard.check(subagent) for _ in range(3)]
-
-        assert checks == [None, None, None]
-        assert guard.check(Message(role="assistant", text="done")) is None
-
     def test_forbidden_tool_guard_names_the_tool(self) -> None:
         guard = ForbiddenToolGuard({"shell"})
 

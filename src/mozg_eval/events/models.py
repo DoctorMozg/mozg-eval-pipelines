@@ -40,7 +40,6 @@ class Message(StrictModel):
     type: Literal["message"] = "message"
     role: Literal["user", "assistant"]
     text: str
-    parent: str | None = None  # the subagent tool call that produced it; None in the main session
 
 
 class ToolCall(StrictModel):
