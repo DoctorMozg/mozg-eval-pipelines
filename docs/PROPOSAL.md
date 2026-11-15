@@ -1,8 +1,9 @@
 # mozg-eval: proposal
 
-Status: revision 6, 2026-11-15. Phase A (§8 milestones 01 to 15) is built, apart from milestone 09
-(deferred) and `renormalize`; the "As built" notes record where the code differs from the plan.
-Phase B and C are not built.
+Status: revision 7, 2026-11-15. Phase A (§8 milestones 01 to 15) is built, apart from milestone 09
+(deferred) and `renormalize`. The "As built" notes record where the code differs from the plan.
+Phase B and C are not built. Revision 7 adds harnesses (§4.13): a plugin is now one case of a
+harness.
 
 Revision 2 added the connector model (drivers and sources), streaming event logs, a storage layer
 that can move from SQLite to Postgres, a single-user server for trends, and a runner agent. It also
@@ -23,7 +24,8 @@ binaries.
 
 ## 1. What we are building
 
-A vendor-neutral eval system for agent plugins and skills, in three parts:
+A vendor-neutral eval system for coding-agent setups, meaning a plugin or a whole harness
+(instructions, skills, subagents, hooks, MCP servers), in three parts:
 
 - **A runner (CLI).** One case file runs on **Claude Code, Codex CLI, Pi and OpenCode**, and on any
   other runtime through a driver connector. It works offline and in CI.
@@ -668,6 +670,48 @@ can't answer permission prompts. Claude Code's auto-mode classifier lets that th
 offers only `Skill`, but blocks it once `Bash` is in the tool set. So an agent session in auto mode
 can run routing cases and not shell-granted ones. Run those from a plain terminal or in CI, or add
 a permission rule for `mzeval run`.
+
+### 4.13 Harnesses
+
+A plugin is one thing an agent can be set up with. A **harness** is the whole setup: instructions,
+skills, subagents, hooks and MCP servers. Evaluating it answers "do my rules change what the agent
+does", which a plugin eval can't.
+
+```text
+harness/
+  harness.mzeval.yaml    schema, name, description, plugins, mcp
+  instructions/*.md  skills/<name>/SKILL.md  agents/<name>.md  hooks.json  scripts/
+  native/<claude|codex|opencode|pi>/
+```
+
+- **Neutral folder plus overlays.** The common parts use Claude Code's shapes, because they are the
+  richest and the most widely written. Each driver translates them (`drivers/*_harness.py`). What
+  has no neutral form lives in `native/<driver>/`, copied as is into that agent's config dir. Its
+  settings file is merged with what mzeval writes, never replaced.
+- **Overlay into the temp HOME, per trial.** A harness is written into the trial's isolated HOME
+  and config dir (§4.12), so the agent sees the harness and nothing of the user's own setup. Hooks
+  reach the harness's `scripts/` through a `${HARNESS_ROOT}` token.
+- **Baseline first.** `run --harness none --harness DIR` runs every case once per harness. The first
+  is the baseline. Each other harness is compared with it per case (paired delta, bootstrap CI,
+  McNemar, as in §4.6). The baseline is excluded from `--threshold` and the exit code, like the
+  without arm of `--ablation`. `none` means the agent's own setup. Ablation stays a separate axis,
+  and a harness's plugins load in both arms.
+- **Name and digest per trial.** Each trial stores `harness` and `harness_digest`, a hash of the
+  harness files and its plugins (migration 0004). A changed harness is a different series, and a
+  stored run can be compared by harness later.
+- **Load checks.** A written file doesn't prove the agent read it, so where an agent reports what it
+  loaded, the driver checks that report. Claude Code's `init` line must list every skill and agent
+  and show each MCP server `connected`, or the trial errors with "harness <name> didn't load: ...".
+  Codex, OpenCode and Pi report nothing of the kind, so they have no check. A driver that can't load
+  a part at all (Pi has no subagents or hooks, and OpenCode 2 hooks are TypeScript plugins) stops the
+  run before any trial, with exit 2.
+- **Secrets stay out.** MCP `env` and `headers` take `${VAR}`, filled from the environment at trial
+  start. An unset variable aborts the run and is named in the error. Harness folders are meant to be
+  shared and committed, so they never hold a token.
+- **Import and its limit.** `mzeval harness import claude` copies instructions, skills, agents and
+  hooks from a Claude config dir. It never copies logins, history, `projects/` or `.claude.json`,
+  and takes only `hooks` from settings.json, because `env` there often holds tokens and the rest
+  is personal state, not setup. MCP servers and plugins are added by hand.
 
 ## 5. Tech stack
 

@@ -56,7 +56,8 @@ from mozg_eval.storage.config import StorageConfig, open_stores
 
 app = typer.Typer(
     name="mzeval",
-    help="Run evals for coding-agent plugins and skills on Claude Code, Codex, Pi and OpenCode.",
+    help="Run evals for a coding agent's setup, a plugin or a whole harness, on Claude Code, "
+    "Codex, Pi and OpenCode.",
     no_args_is_help=True,
 )
 
@@ -78,7 +79,9 @@ DRIVERS: dict[DriverName, type[ClaudeDriver | CodexDriver | OpenCodeDriver | PiD
 import_app = typer.Typer(help="Convert cases from other eval tools.", no_args_is_help=True)
 app.add_typer(import_app, name="import")
 harness_app = typer.Typer(
-    help="Work with harnesses, the setup an agent runs with.", no_args_is_help=True
+    help="Work with harnesses: instructions, skills, subagents, hooks and MCP servers an agent "
+    "runs with.",
+    no_args_is_help=True,
 )
 app.add_typer(harness_app, name="harness")
 harness_import_app = typer.Typer(
