@@ -148,6 +148,15 @@ class TestGuards:
 
         assert checks == [None, None, "turn 3 is over max_turns 2"]
 
+    def test_turn_guard_skips_subagent_messages(self) -> None:
+        guard = TurnGuard(1)
+        subagent = Message(role="assistant", text="found it", parent="toolu_1")
+
+        checks = [guard.check(subagent) for _ in range(3)]
+
+        assert checks == [None, None, None]
+        assert guard.check(Message(role="assistant", text="done")) is None
+
     def test_forbidden_tool_guard_names_the_tool(self) -> None:
         guard = ForbiddenToolGuard({"shell"})
 

@@ -75,6 +75,7 @@ class _Usage(_Loose):
 class StreamLine(_Loose):
     type: str
     subtype: str | None = None
+    parent_tool_use_id: str | None = None
     message: _Message | None = None
     claude_code_version: str = ""
     model: str = ""
@@ -127,7 +128,8 @@ def normalize(line: StreamLine) -> list[Payload]:
             events: list[Payload] = []
             for block in blocks:
                 if block.type == "text" and block.text:
-                    events.append(Message(role="assistant", text=block.text))
+                    parent = line.parent_tool_use_id
+                    events.append(Message(role="assistant", text=block.text, parent=parent))
                 elif block.type == "tool_use":
                     events.extend(_tool_call(block))
             return events

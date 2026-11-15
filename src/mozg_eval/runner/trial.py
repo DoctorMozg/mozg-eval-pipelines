@@ -70,7 +70,8 @@ class TurnGuard:
         self.turns = 0
 
     def check(self, payload: Payload) -> str | None:
-        if isinstance(payload, Message) and payload.role == "assistant":
+        # A subagent runs its own turns, which the agent's max_turns doesn't count either.
+        if isinstance(payload, Message) and payload.role == "assistant" and payload.parent is None:
             self.turns += 1
             if self.turns > self.max_turns:
                 return f"turn {self.turns} is over max_turns {self.max_turns}"

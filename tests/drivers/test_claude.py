@@ -80,6 +80,12 @@ class TestNormalize:
 
         assert events[1] == SubagentSpawned(subagent="pipeline-researcher")
 
+    def test_subagent_text_names_its_parent_call(self) -> None:
+        text = {"type": "text", "text": "found it"}
+        events = line(type="assistant", parent_tool_use_id="toolu_1", message={"content": [text]})
+
+        assert events == [Message(role="assistant", text="found it", parent="toolu_1")]
+
     def test_shell_result_with_block_content(self) -> None:
         call = {"type": "tool_use", "id": "t1", "name": "Bash", "input": {"command": "ls"}}
         result = {
