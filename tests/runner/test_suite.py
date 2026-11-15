@@ -90,6 +90,16 @@ class TestRunCommand:
         assert f"--plugin-dir={tmp_path / 'plugins' / 'mz-memory'}" in record["argv"]
         assert not Path(record["env"]["HOME"]).exists()
 
+    def test_relative_case_path_still_finds_its_fixture(
+        self, suite: Path, fake_claude: Path, tmp_path: Path
+    ) -> None:
+        relative = str(suite.relative_to(tmp_path))
+
+        result = CliRunner().invoke(app, ["run", relative, "--executable", str(fake_claude)])
+
+        assert result.exit_code == 0, result.output
+        assert json.loads((tmp_path / "record.json").read_text())["files"] == [".git", "seed.txt"]
+
     def test_failing_fixture_exits_2_with_its_output(self, suite: Path, fake_claude: Path) -> None:
         (suite / "fixture.sh").write_text("echo no-such-thing >&2; exit 3\n")
 

@@ -154,7 +154,8 @@ class SuiteRunner:
         self, case_files: Sequence[Path], options: RunOptions = RunOptions()
     ) -> SuiteResult:
         loader = CaseLoader()
-        loaded = [(path.parent, loader.load(path)) for path in case_files]
+        # Absolute, because the fixture runs from the trial's own workspace.
+        loaded = [(path.parent.resolve(), loader.load(path)) for path in case_files]
         cases = [(case_dir, case) for case_dir, case in loaded if options.select.matches(case)]
         if not cases:
             raise NoCaseSelected(f"no case matches {options.select}")
