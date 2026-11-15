@@ -12,7 +12,7 @@ from pydantic import BaseModel, JsonValue, ValidationError
 
 from mozg_eval.drivers.claude_plugins import PluginCopies, PluginRenderError
 from mozg_eval.drivers.process import ChildProcess
-from mozg_eval.drivers.protocol import MAX_TURNS_REASON, Capabilities, TrialRequest
+from mozg_eval.drivers.protocol import MAX_TURNS_REASON, AgentError, Capabilities, TrialRequest
 from mozg_eval.events.models import (
     End,
     Error,
@@ -177,7 +177,7 @@ class OpenCodeDriver:
         )
         out, _ = await process.communicate()
         if process.returncode != 0:
-            raise RuntimeError(f"{self.executable} --version exited with {process.returncode}")
+            raise AgentError(f"{self.executable} --version exited with {process.returncode}")
         return out.decode().strip()
 
     def command(self, request: TrialRequest) -> list[str]:

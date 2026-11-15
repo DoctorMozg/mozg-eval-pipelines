@@ -9,7 +9,7 @@ from pathlib import Path
 from pydantic import BaseModel, JsonValue, ValidationError
 
 from mozg_eval.drivers.process import ChildProcess
-from mozg_eval.drivers.protocol import Capabilities, TrialRequest
+from mozg_eval.drivers.protocol import AgentError, Capabilities, TrialRequest
 from mozg_eval.events.models import (
     End,
     Error,
@@ -201,7 +201,7 @@ class ClaudeDriver:
         )
         out, _ = await process.communicate()
         if process.returncode != 0:
-            raise RuntimeError(f"{self.executable} --version exited with {process.returncode}")
+            raise AgentError(f"{self.executable} --version exited with {process.returncode}")
         return out.decode().strip()
 
     def command(self, request: TrialRequest) -> list[str]:

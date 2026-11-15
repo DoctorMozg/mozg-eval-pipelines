@@ -12,7 +12,7 @@ from pathlib import Path
 
 from pydantic import JsonValue
 
-from mozg_eval.drivers.protocol import Driver, Limits, TrialRequest
+from mozg_eval.drivers.protocol import AgentError, Driver, Limits, TrialRequest
 from mozg_eval.events.models import End, EndStatus, Event, Payload, SkillActivated, Usage
 from mozg_eval.grading.graders import TrialGrader
 from mozg_eval.grading.models import GradeResult, JudgeSpend
@@ -188,7 +188,7 @@ class SuiteRunner:
         try:
             async with asyncio.TaskGroup() as group:
                 tasks = [group.create_task(trial(item)) for item in planned]
-        except* FixtureError as failed:
+        except* (FixtureError, AgentError) as failed:
             raise failed.exceptions[0] from None
         done = [task.result() for task in tasks]
         trials = [summary for summary in done if summary is not None]

@@ -19,6 +19,10 @@ log = logging.getLogger(__name__)
 type Support = Literal["native", "inferred", "none"]
 
 
+class AgentError(RuntimeError):
+    """The agent can't start at all, such as a failed `--version` check."""
+
+
 class Capabilities(StrictModel):
     skills: Support = "none"
     subagents: Support = "none"
@@ -107,7 +111,7 @@ class StdioDriver:
         )
         out, _ = await process.communicate()
         if process.returncode != 0:
-            raise RuntimeError(f"{self.manifest.version_cmd} exited with {process.returncode}")
+            raise AgentError(f"{self.manifest.version_cmd} exited with {process.returncode}")
         return out.decode().strip()
 
     async def run(self, request: TrialRequest) -> AsyncIterator[Payload]:

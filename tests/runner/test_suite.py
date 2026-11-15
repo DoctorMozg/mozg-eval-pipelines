@@ -144,6 +144,18 @@ class TestRunCommand:
         assert result.output == f"agent not found: {missing}; install it or pass --executable\n"
         assert not (tmp_path / ".mzeval").exists()
 
+    def test_agent_whose_version_check_fails_exits_2_with_one_line(
+        self, suite: Path, tmp_path: Path
+    ) -> None:
+        broken = tmp_path / "broken-claude"
+        broken.write_text("#!/bin/sh\nexit 3\n")
+        broken.chmod(0o755)
+
+        result = CliRunner().invoke(app, ["run", str(suite), "--executable", str(broken)])
+
+        assert result.exit_code == 2
+        assert result.output == f"agent check failed: {broken} --version exited with 3\n"
+
     def test_relative_executable_still_runs_from_the_trial_workspace(
         self, suite: Path, fake_claude: Path
     ) -> None:

@@ -14,6 +14,7 @@ from mozg_eval.drivers.claude import ClaudeDriver
 from mozg_eval.drivers.codex import CodexDriver
 from mozg_eval.drivers.opencode import OpenCodeDriver
 from mozg_eval.drivers.pi import PiDriver
+from mozg_eval.drivers.protocol import AgentError
 from mozg_eval.grading.compare import Comparison, arm_scores
 from mozg_eval.grading.graders import EXPECT
 from mozg_eval.grading.models import GradeResult
@@ -221,6 +222,9 @@ def run(
         raise typer.Exit(2) from exc
     except FixtureError as exc:
         typer.echo(f"fixture failed: {exc}", err=True)
+        raise typer.Exit(2) from exc
+    except AgentError as exc:
+        typer.echo(f"agent check failed: {exc}", err=True)
         raise typer.Exit(2) from exc
     except NoCaseSelected as exc:
         typer.echo(str(exc), err=True)
